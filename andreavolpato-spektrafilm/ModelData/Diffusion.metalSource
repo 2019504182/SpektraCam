@@ -1,0 +1,45 @@
+// Source diffusion PSFs and mirror boundaries: spektrafilm 3bb2c2d, GPLv3.
+#include <metal_stdlib>
+using namespace metal;
+inline int diffusion_mirror(int i,int n){if(n==1)return 0;int period=2*(n-1),p=i%period;if(p<0)p+=period;return p<n?p:period-p;}
+kernel void diffusion_pad(device const float4* input [[buffer(0)]],device float* output [[buffer(1)]],
+                          constant uint4& size [[buffer(2)]],constant uint& radius [[buffer(3)]],
+                          uint2 point [[thread_position_in_grid]]) {
+    uint w=size.x,h=size.y,fw=size.z,fh=size.w,x=point.x,y=point.y;
+    if(x>=fw||y>=fh)return;
+    float3 value=0;
+    if(x<w+2*radius&&y<h+2*radius)value=input[diffusion_mirror(int(y)-int(radius),int(h))*w+diffusion_mirror(int(x)-int(radius),int(w))].xyz;
+    uint index=y*fw+x,plane=fw*fh;
+    output[index]=value.x;output[plane+index]=value.y;output[2*plane+index]=value.z;
+}
+kernel void diffusion_psf(device float* output [[buffer(0)]],device float4* sums [[buffer(1)]],
+                          constant float4* components [[buffer(2)]],constant uint4& shape [[buffer(3)]],
+                          uint i [[thread_position_in_grid]],uint lane [[thread_index_in_threadgroup]],
+                          uint group [[threadgroup_position_in_grid]]) {
+    threadgroup float4 partial[128];
+    uint radius=shape.x,fw=shape.y,fh=shape.z,edge=2*radius+1;
+    float3 value=0;
+    if(i<edge*edge) {
+        int dx=int(i%edge)-int(radius),dy=int(i/edge)-int(radius);
+        float r=sqrt(float(dx*dx+dy*dy));
+        for(uint k=0;k<shape.w;++k){float lambda=components[k].w;value+=components[k].xyz*(exp(-r/lambda)/(2*M_PI_F*lambda*lambda));}
+        uint row=uint((dy+int(fh))%int(fh)),column=uint((dx+int(fw))%int(fw)),index=row*fw+column,plane=fw*fh;
+        output[index]=value.x;output[plane+index]=value.y;output[2*plane+index]=value.z;
+    }
+    partial[lane]=float4(value,0);threadgroup_barrier(mem_flags::mem_threadgroup);
+    for(uint n=64;n>0;n>>=1){if(lane<n)partial[lane]+=partial[lane+n];threadgroup_barrier(mem_flags::mem_threadgroup);}
+    if(lane==0)sums[group]=partial[0];
+}
+kernel void diffusion_sum(device const float4* partial [[buffer(0)]],device float4* sum [[buffer(1)]],
+                          constant uint& count [[buffer(2)]],uint i [[thread_position_in_grid]]) {
+    if(i!=0)return;float4 value=0;for(uint k=0;k<count;++k)value+=partial[k];sum[0]=value;
+}
+kernel void diffusion_finish(device const float* filtered [[buffer(0)]],device const float4* original [[buffer(1)]],
+                             device float4* output [[buffer(2)]],device const float4* sum [[buffer(3)]],
+                             constant uint4& size [[buffer(4)]],constant uint& radius [[buffer(5)]],
+                             constant float& fraction [[buffer(6)]],uint i [[thread_position_in_grid]]) {
+    uint w=size.x,h=size.y,fw=size.z,fh=size.w;if(i>=w*h)return;
+    uint index=(i/w+radius)*fw+i%w+radius,plane=fw*fh;
+    float3 value=float3(filtered[index],filtered[plane+index],filtered[2*plane+index])/sum[0].xyz;
+    output[i]=float4(original[i].xyz*(1-fraction)+value*fraction,0);
+}

@@ -1,0 +1,77 @@
+// Reference FIR / Young–van Vliet IIR from spektrafilm 3bb2c2d. GPLv3.
+#include <metal_stdlib>
+using namespace metal;
+
+// Compensated pairs prevent large-radius recursive filters from losing DC gain.
+// Metal has no native Float64 on Apple GPUs. Keep both recurrence state and coefficients.
+struct Pair { float3 hi, lo; };
+inline Pair add_pair(Pair a, Pair b) {
+    float3 sum = a.hi + b.hi;
+    float3 bv = sum - a.hi;
+    float3 error = (a.hi - (sum - bv)) + (b.hi - bv) + a.lo + b.lo;
+    float3 hi = sum + error;
+    return {hi, error - (hi - sum)};
+}
+inline Pair mul_pair(Pair a, Pair b) {
+    float3 product = a.hi * b.hi;
+    float3 error = fma(a.hi, b.hi, -product) + a.hi*b.lo + a.lo*b.hi + a.lo*b.lo;
+    float3 hi = product + error;
+    return {hi, error - (hi - product)};
+}
+inline int reflect_half(int index, int count) {
+    int position = index % (2*count);
+    if (position < 0) position += 2*count;
+    return position < count ? position : 2*count - 1 - position;
+}
+kernel void fir_pass(device const float4* input [[buffer(0)]],
+                     device float4* output [[buffer(1)]],
+                     constant float4* weights [[buffer(2)]],
+                     constant uint4& shape [[buffer(3)]], uint index [[thread_position_in_grid]]) {
+    uint width=shape.x, height=shape.y;
+    if (index >= width*height) return;
+    int x=index%width, y=index/width;
+    float3 result=0;
+    for (int k=-9; k<=9; ++k) {
+        int sx=shape.z == 0 ? x : reflect_half(x+k,int(width));
+        int sy=shape.z == 0 ? reflect_half(y+k,int(height)) : y;
+        result += input[sy*width+sx].xyz * weights[k+9].xyz;
+    }
+    output[index]=float4(result,0);
+}
+kernel void iir_pass(device const float4* input [[buffer(0)]],
+                     device float4* output [[buffer(1)]],
+                     device float4* forwardHi [[buffer(2)]],
+                     device float4* forwardLo [[buffer(3)]],
+                     constant float4* coefficients [[buffer(4)]],
+                     constant uint4& shape [[buffer(5)]], uint line [[thread_position_in_grid]]) {
+    uint width=shape.x, height=shape.y;
+    bool horizontal=shape.z == 0;
+    uint lines=horizontal ? height : width, length=horizontal ? width : height;
+    if (line >= lines) return;
+    uint first=horizontal ? line*width : line, step=horizontal ? 1 : width;
+    Pair b[4];
+    for(uint k=0;k<4;++k) b[k]={coefficients[2*k].xyz, coefficients[2*k+1].xyz};
+    Pair s1={input[first].xyz,float3(0)},s2=s1,s3=s1;
+    for(uint k=0;k<length;++k) {
+        uint index=first+k*step;
+        Pair value=add_pair(add_pair(add_pair(mul_pair(b[0],{input[index].xyz,float3(0)}),
+                            mul_pair(b[1],s1)),mul_pair(b[2],s2)),mul_pair(b[3],s3));
+        forwardHi[index]=float4(value.hi,0); forwardLo[index]=float4(value.lo,0);
+        s3=s2;s2=s1;s1=value;
+    }
+    uint last=first+(length-1)*step;
+    s1={forwardHi[last].xyz,forwardLo[last].xyz};s2=s1;s3=s1;
+    for(int k=int(length)-1;k>=0;--k) {
+        uint index=first+uint(k)*step;
+        Pair value=add_pair(add_pair(add_pair(mul_pair(b[0],{forwardHi[index].xyz,forwardLo[index].xyz}),
+                            mul_pair(b[1],s1)),mul_pair(b[2],s2)),mul_pair(b[3],s3));
+        output[index]=float4(value.hi+value.lo,0);
+        s3=s2;s2=s1;s1=value;
+    }
+}
+kernel void weighted_sum(device const float4* input [[buffer(0)]],
+                         device float4* output [[buffer(1)]],
+                         constant float2& weights [[buffer(2)]],
+                         constant uint& count [[buffer(3)]], uint i [[thread_position_in_grid]]) {
+    if(i<count) output[i]=input[i]*weights.x+(weights.y == 0 ? float4(0) : output[i]*weights.y);
+}

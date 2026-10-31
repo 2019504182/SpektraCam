@@ -1,0 +1,20 @@
+.DS_Store
+**/xcuserdata/
+*.xcuserstate
+*.xcresult
+DerivedData/
+build/
+.build/
+.env
+.env.*
+!.env.example
+*.p12
+*.mobileprovision
+Reference/.venv/
+Reference/upstream/
+Reference/results/
+Reference/Inputs/
+**/__pycache__/
+# Local audit archive and old scaffold generator.
+Reference/upstream-*.zip
+Scripts/generate-catalog.py

@@ -1,0 +1,160 @@
+// Native color-only spektrafilm stages, revision 3bb2c2d. GPLv3.
+// CAM16 reference: Colour 0.4.6; BSD notice in ThirdPartyNotices.txt.
+#include <metal_stdlib>
+using namespace metal;
+
+float3 apply_basis(constant float4 *p, uint first, float3 value) {
+    return p[first].xyz*value.x+p[first+1].xyz*value.y+p[first+2].xyz*value.z;
+}
+float signed_pow(float x, float power) { return copysign(pow(abs(x),power),x); }
+float response(float x,float fl) {
+    float v=pow(fl*abs(x)/100.0f,0.42f);
+    return 400.0f*sign(x)*v/(27.13f+v)+0.1f;
+}
+float inverse_response(float x,float fl) {
+    float v=x-0.1f;
+    return sign(v)*(100.0f/fl)*signed_pow(27.13f*abs(v)/(400.0f-abs(v)),1.0f/0.42f);
+}
+float3 cam_ucs(float3 xyz,constant float4 *p) {
+    float3 scaled=xyz*100.0f;
+    float3 rgb=float3(dot(float3(0.401288f,0.650173f,-0.051461f),scaled),
+                      dot(float3(-0.250268f,1.204414f,0.045854f),scaled),
+                      dot(float3(-0.002079f,0.048952f,0.953127f),scaled))*p[22].xyz;
+    float fl=p[22].w,n=p[23].x,nbb=p[23].y,z=p[23].z,aw=p[23].w;
+    float r=response(rgb.x,fl),g=response(rgb.y,fl),b=response(rgb.z,fl);
+    float a=r-12.0f*g/11.0f+b/11.0f,opponentB=(r+g-2.0f*b)/9.0f;
+    float h=atan2(opponentB,a),et=(cos(h+2.0f)+3.8f)/4.0f;
+    float achromatic=(2.0f*r+g+0.05f*b-0.305f)*nbb;
+    float j=100.0f*signed_pow(achromatic/aw,0.69f*z);
+    float denominator=r+g+21.0f*b/20.0f;
+    float t=denominator==0 ? 0 : (50000.0f/13.0f)*nbb*et*length(float2(a,opponentB))/denominator;
+    float chroma=signed_pow(t,0.9f)*signed_pow(j/100.0f,0.5f)*pow(1.64f-pow(0.29f,n),0.73f);
+    float m=chroma*pow(fl,0.25f),jp=1.7f*j/(1.0f+0.007f*j),mp=log(1.0f+0.0228f*m)/0.0228f;
+    return float3(jp,mp*cos(h),mp*sin(h));
+}
+float3 cam_xyz(float3 jab,constant float4 *p) {
+    float fl=p[22].w,n=p[23].x,nbb=p[23].y,z=p[23].z,aw=p[23].w;
+    float j=jab.x/(1.7f-0.007f*jab.x),mp=length(jab.yz),h=atan2(jab.z,jab.y);
+    float m=(exp(0.0228f*mp)-1.0f)/0.0228f,chroma=m/pow(fl,0.25f);
+    float t=signed_pow(chroma/(sqrt(max(j,2.220446049250313e-16f)/100.0f)*pow(1.64f-pow(0.29f,n),0.73f)),1.0f/0.9f);
+    float et=(cos(h+2.0f)+3.8f)/4.0f,achromatic=aw*signed_pow(j/100.0f,1.0f/(0.69f*z));
+    float p2=achromatic/nbb+0.305f;
+    float gamma=23.0f*p2*t/(23.0f*(50000.0f/13.0f)*nbb*et+11.0f*t*cos(h)+108.0f*t*sin(h));
+    float a=gamma*cos(h),b=gamma*sin(h);
+    float ra=(460.0f*p2+451.0f*a+288.0f*b)/1403.0f;
+    float ga=(460.0f*p2-891.0f*a-261.0f*b)/1403.0f;
+    float ba=(460.0f*p2-220.0f*a-6300.0f*b)/1403.0f;
+    float3 rgb=float3(inverse_response(ra,fl),inverse_response(ga,fl),inverse_response(ba,fl))/p[22].xyz;
+    return float3(dot(p[27].xyz,rgb),dot(p[28].xyz,rgb),dot(p[29].xyz,rgb))/100.0f;
+}
+float knee(float value,float threshold,float limit,float power) {
+    if(value<=threshold)return value;
+    float scale=limit-threshold,x=(value-threshold)/scale;
+    return threshold+scale*x/pow(1.0f+pow(x,power),1.0f/power);
+}
+float chroma_boundary(float l,float h,device const float *table,constant float4 *p) {
+    float l0=p[25].x,l1=p[25].y;uint nl=uint(p[25].z),nh=uint(p[25].w);
+    float hi=(h-p[26].x)/p[26].y,hf=hi-floor(hi);
+    int hlow=((int(floor(hi))%int(nh))+int(nh))%int(nh);uint hhigh=(uint(hlow)+1)%nh;
+    float li=(clamp(l,l0,l1)-l0)/(l1-l0)*float(nl-1);
+    uint low=uint(clamp(int(floor(li)),0,int(nl)-2)),high=low+1;float lf=li-float(low);
+    return table[low*nh+hlow]*(1-lf)*(1-hf)+table[low*nh+hhigh]*(1-lf)*hf+
+           table[high*nh+hlow]*lf*(1-hf)+table[high*nh+hhigh]*lf*hf;
+}
+float3 compress_rgb(float3 rgb,device const float *boundary,constant float4 *p) {
+    float3 jab=cam_ucs(apply_basis(p,16,rgb),p);
+    float j=knee(jab.x/p[24].x,0.7f,1.0f,2.2f)*p[24].x,c=length(jab.yz),h=atan2(jab.z,jab.y);
+    if(!isfinite(j))return float3(NAN);
+    if(!isfinite(c)||!isfinite(h))return apply_basis(p,19,cam_xyz(float3(j,0,0),p));
+    float maximum=max(chroma_boundary(j,h,boundary,p),1e-9f);
+    float nc=knee(c/maximum,0,1,6)*maximum;
+    return apply_basis(p,19,cam_xyz(float3(j,nc*cos(h),nc*sin(h)),p));
+}
+float mitchell(float t) {
+    float x=abs(t),b=1.0f/3.0f,c=1.0f/3.0f;
+    if(x<1)return ((12-9*b-6*c)*x*x*x+(-18+12*b+6*c)*x*x+6-2*b)/6;
+    if(x<2)return ((-b-6*c)*x*x*x+(6*b+30*c)*x*x+(-12*b-48*c)*x+8*b+24*c)/6;
+    return 0;
+}
+int reflect_index(int index,int size) { return index<0 ? -index : index>=size ? 2*(size-1)-index : index; }
+float3 lookup_table(float2 coordinate,device const float4 *table,uint size) {
+    float2 xy=clamp(coordinate*float(size-1),float2(0),float2(size-1));
+    int2 base=min(int2(floor(xy)),int2(size-2));float2 fraction=xy-float2(base);
+    float3 result=float3(0);float sum=0;
+    for(int i=0;i<4;i++) {
+        float wx=mitchell(fraction.x+1-float(i));int x=reflect_index(base.x-1+i,int(size));
+        for(int j=0;j<4;j++) {
+            float weight=wx*mitchell(fraction.y+1-float(j));int y=reflect_index(base.y-1+j,int(size));
+            sum+=weight;result+=table[x*size+y].xyz*weight;
+        }
+    }
+    return sum==0 ? result : result/sum;
+}
+float3 lookup_curve(float3 exposure,device const float4 *curve,uint count) {
+    float3 result;
+    for(uint channel=0;channel<3;channel++) {
+        float x=exposure[channel];
+        if(x<=curve[0].w){result[channel]=curve[0][channel];continue;}
+        if(x>=curve[count-1].w){result[channel]=curve[count-1][channel];continue;}
+        if(isnan(x)){result[channel]=x;continue;}
+        uint low=0,high=count;
+        while(low<high){uint m=(low+high)/2;if(curve[m].w<=x)low=m+1;else high=m;}
+        uint i=low-1;float dx=curve[i+1].w-curve[i].w,t=dx==0 ? 0 : (x-curve[i].w)/dx;
+        result[channel]=curve[i][channel]+t*(curve[i+1][channel]-curve[i][channel]);
+    }
+    return result;
+}
+float encode_srgb(float x) { return x<=0.0031308f ? 12.92f*x : 1.055f*pow(x,1.0f/2.4f)-0.055f; }
+
+// Shared pointwise stages used by both verification paths and the photographic graph.
+float3 camera_exposure(float3 input,device const float4 *filmTable,constant float4 *p,uint size) {
+    float3 xyz=apply_basis(p,2,input*p[0].y);
+    float brightness=xyz.x+xyz.y+xyz.z;
+    float2 xy=xyz.xy/max(brightness,1e-10f);float inverseX=1-xy.x;
+    float2 tc=clamp(float2(inverseX*inverseX,xy.y/max(inverseX,1e-10f)),float2(0),float2(1));
+    return lookup_table(tc,filmTable,size)*brightness*p[0].x;
+}
+float3 paper_exposure(float3 density,device const float4 *basis,constant float4 *p,uint wavelengths) {
+    float3 raw=0;
+    for(uint i=0;i<wavelengths;++i) {
+        float4 channel=basis[i*2];float spectral=dot(density,channel.xyz)+channel.w;
+        float light=isnan(spectral)?0:pow(10.0f,-spectral);raw+=basis[i*2+1].xyz*light;
+    }
+    raw=raw*p[8].x+p[9].xyz;
+    return pow(float3(10),log10(max(raw,float3(0))+1e-10f))*p[8].y;
+}
+float3 scan_spectrum(float3 density,device const float4 *basis,uint wavelengths) {
+    float3 xyz=0;
+    for(uint i=0;i<wavelengths;++i) {
+        float4 channel=basis[i*2];float spectral=dot(density,channel.xyz)+channel.w;
+        float light=isnan(spectral)?0:pow(10.0f,-spectral);xyz+=basis[i*2+1].xyz*light;
+    }
+    return max(xyz,float3(0))+1e-10f;
+}
+float3 encode_output(float3 rgb,constant float4 *p) {
+    rgb=apply_basis(p,13,rgb);
+    return float3(encode_srgb(rgb.x),encode_srgb(rgb.y),encode_srgb(rgb.z));
+}
+
+kernel void color_pipeline(device const float4 *input [[buffer(0)]],device float4 *output [[buffer(1)]],
+                           device const float4 *filmTable [[buffer(2)]],device const float4 *filmCurve [[buffer(3)]],
+                           device const float4 *couplerCurve [[buffer(4)]],device const float4 *printCurve [[buffer(5)]],
+                           device const float4 *printBasis [[buffer(6)]],device const float4 *scanBasis [[buffer(7)]],
+                           device const float *boundary [[buffer(8)]],constant float4 *p [[buffer(9)]],
+                           constant uint4 &shape [[buffer(10)]],constant uint4 &flags [[buffer(11)]],
+                           uint pixel [[thread_position_in_grid]]) {
+    if(pixel>=shape.x)return;
+    float3 raw=camera_exposure(input[pixel].xyz,filmTable,p,shape.y);
+    float3 logRaw=log10(max(raw,float3(0))+1e-10f);
+    float3 density=lookup_curve(logRaw,filmCurve,shape.z);
+    if(flags.x!=0) {
+        float3 silver=flags.y!=0 ? p[1].xyz-density : density;
+        density=lookup_curve(logRaw-apply_basis(p,5,silver),couplerCurve,shape.z);
+    }
+    if(flags.z==0) {
+        float3 paper=paper_exposure(density,printBasis,p,flags.w);
+        density=lookup_curve(log10(max(paper,float3(0))+1e-10f),printCurve,shape.w);
+    }
+    float3 rgb=compress_rgb(apply_basis(p,10,scan_spectrum(density,scanBasis,flags.w)),boundary,p);
+    output[pixel]=float4(encode_output(rgb,p),1);
+}

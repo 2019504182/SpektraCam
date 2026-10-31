@@ -1,0 +1,6 @@
+2026-10-31 — Native port data derived from Andrea Volpato, spektrafilm 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc.
+Profile/LUT data: CC BY-SA 4.0; original license retained unchanged.
+Changes: load/unmix upstream profiles with its runtime; serialize processed arrays and stock-specific Hanatos tables; store sRGB CAM16-UCS gamut boundary and color-space matrices. Float64 precision retained. Missing measurements are strings "NaN".
+Shared Hanatos irradiance spectra (provided upstream by hanatos/Johannes Hanika) retain their exact Float16 values. Stock spectral windows and input-compression coordinate maps support runtime UV/IR filtering.
+These data support native calculations; they are not a baked final-look RGB LUT.
+Runtime Metal shader resources implement native code stages (GPLv3), separate from profile-derived CC BY-SA data.

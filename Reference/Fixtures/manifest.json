@@ -1,0 +1,25 @@
+{
+  "revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "files": {
+    "CHANGELOG.txt": "602c69ccc16de267bb0cd21b1b3c1a5382ef87108b61993158703325f5ddccf3",
+    "appearance-stages.json": "b06f7d0aa38f283ac75727d5629ec2feec8e4de9f9d9187cf5490325273b7bf5",
+    "color-pipeline.json": "3d5d4dd3513ae6fd64657156ba152e5b47dc86c269a85afa7a98d591e8fe4364",
+    "core-stages.json": "dbf6fbc59966592bb01d6e233fa5d6cb52ab111ea32cc1a38c99c2fe4a9d8f60",
+    "core-stages.sha256": "c15ecfbe8dbae1dbba4fed2ba7deead874774d704ea865e37d674fd8862d0960",
+    "coupler-stages.json": "0aa5279d3d39fd6192c012b20ef8616c24128eb9457fb483b9e070ef9acbdf29",
+    "diffusion-stages.json": "3a22a2ad651e48180c441dd5da3f829facd8d8608bee6e8c1bf399f9f932e368",
+    "film-noise.json": "8056b5a6f023ff8f3242e358aefd2e6d796323930811ccb4f924976df7336e0d",
+    "filtered-exposure.json": "9f83808bf3b3ef3cfff441b85a5d6b655e323b3a9fbc3eb3d880102dc4d9cd2f",
+    "gamut-boundaries.f64": "4ae048650f4db36cd9c8d53951cb92c924d4abcbd7ab1d0399c1a79b6fd85b10",
+    "gamut-stages.json": "9be1fc5e5d260f065e859b0b3f37a1a6064e00d5f384d7189d22cd4792bc5c40",
+    "grain-stages.json": "d12bdab35700f6767a79687c61ec5b33dca3698764a724bceca778277934f793",
+    "halation-stages.json": "11a8b0832e1bdc7a143a81a4395dafcd9062e32526574556760182ada67f437f",
+    "hanatos-tables.f64": "6798286a046eddb4fa69ad1f97c034c2caab9bdb42def7bf226d633fcaa9fe65",
+    "metering-stages.json": "e2b3374de3f4df1dbe76eeee81b75e3ef11422fadda0076274db0d6e97cf3c65",
+    "print-exposure-stages.json": "691281d113333581e8b86b639394e6a668ade83a51fbcb3eee82bc71e4371d02",
+    "print-morph-stages.json": "6e72cdf012d0393b0eb8e86becfa1555b9ff45844b4686d4c3a50a4ab01a9406",
+    "spatial-pipeline.json": "cd1bd3c3fc3fc0374ed4d2eac58e24a0b1d25aeade8de657be5a8b2185794e5e",
+    "spatial-stages.json": "45613feb9285cac02601c41d9642f957903b26d72d7b28437e1c69e0a5a8e444",
+    "upsampling-stages.json": "7803fe29e46617222603010ff68ff64a96c0fcf5a39de15f54e09c516597b510"
+  }
+}

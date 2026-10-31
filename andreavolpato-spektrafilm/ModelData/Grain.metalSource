@@ -1,0 +1,85 @@
+// Native particle-noise stage for spektrafilm. GPLv3.
+// Philox: Random123 / D. E. Shaw Research. PTRS: Hörmann / NumPy reference.
+// Retained BSD notices: ThirdPartyNotices.txt.
+#include <metal_stdlib>
+using namespace metal;
+constant float grain_log_factorials[16]={0,0,0.69314718056f,1.79175946923f,3.17805383035f,
+            4.78749174278f,6.57925121201f,8.52516136107f,10.6046029027f,12.8018274801f,
+            15.1044125731f,17.5023078459f,19.9872144957f,22.5521638531f,25.1912211827f,27.8992713838f};
+
+inline uint4 grain_philox(uint4 c,uint2 key) {
+    for(uint round=0;round<10;++round) {
+        uint hi0=mulhi(c.x,0xD2511F53u),lo0=c.x*0xD2511F53u;
+        uint hi1=mulhi(c.z,0xCD9E8D57u),lo1=c.z*0xCD9E8D57u;
+        c=uint4(hi1^c.y^key.x,lo1,hi0^c.w^key.y,lo0);
+        key+=uint2(0x9E3779B9u,0xBB67AE85u);
+    }
+    return c;
+}
+struct GrainStream {ulong pixel;uint domain;uint2 seed;uint block,lane;uint4 words;};
+inline float grain_uniform(thread GrainStream& r) {
+    if(r.lane==4) {
+        r.words=grain_philox(uint4(uint(r.pixel),uint(r.pixel>>32),r.domain,r.block),r.seed);
+        r.block++;r.lane=0;
+    }
+    // 23 random bits plus half a bin give an open Float32 interval, never 0 or 1.
+    return (float(r.words[r.lane++]>>9)+0.5f)*(1.0f/8388608.0f);
+}
+inline float grain_poisson_log(float k,float mean) {
+    if(k==0)return -mean;
+    if(k<16) {
+
+        return -mean+k*log(mean)-grain_log_factorials[uint(k)];
+    }
+    float inv=1/k,square=inv*inv;
+    float error=inv*(1.0f/12-square*(1.0f/360-square*(1.0f/1260-square*(1.0f/1680-square/1188))));
+    float delta=(k-mean)/mean,deviance;
+    if(abs(delta)<0.1f) {
+        float power=delta*delta,total=power/2;
+        for(uint n=3;n<=14;++n){power*=-delta;total+=power/float(n*(n-1));}
+        deviance=mean*total;
+    } else {deviance=k*log(k/mean)+mean-k;}
+    return -error-0.5f*log(2*M_PI_F*k)-deviance;
+}
+inline float grain_poisson(float mean,thread GrainStream& random) {
+    if(mean==0)return 0;
+    if(!isfinite(mean)||mean<0||mean>1e15f)return as_type<float>(0x7fc00000u);
+    if(mean<10) {
+        float threshold=exp(-mean),product=1;
+        for(uint k=0;k<512;++k){product*=grain_uniform(random);if(product<=threshold)return float(k);}
+    } else {
+        float b=0.931f+2.53f*sqrt(mean),a=-0.059f+0.02483f*b;
+        float inverseAlpha=1.1239f+1.1328f/(b-3.4f),squeeze=0.9277f-3.6224f/(b-2);
+        for(uint attempt=0;attempt<512;++attempt) {
+            float u=grain_uniform(random)-0.5f,v=grain_uniform(random),us=0.5f-abs(u);
+            float k=floor((2*a/us+b)*u+mean+0.43f);
+            if(k<0)continue;
+            if(us>=0.07f&&v<=squeeze)return k;
+            if(us<0.013f&&v>us)continue;
+            if(log(v)+log(inverseAlpha)-log(a/(us*us)+b)<=grain_poisson_log(k,mean))return k;
+        }
+    }
+    // Signal invalid work rather than let an unexpected rejection loop stall the GPU.
+    return as_type<float>(0x7fc00000u);
+}
+inline float grain_particle(float density,float maximum,float particles,float uniformity,
+                            thread GrainStream& random) {
+    float ratio=density/maximum,p=clamp(ratio,1e-6f,1-1e-6f);
+    float complement=ratio>=1-1e-6f ? 1e-6f : 1-p;
+    // Algebraic form avoids cancellation at uniformity=1 and saturated density.
+    float saturation=(1-uniformity)+uniformity*(complement+p*1e-6f);
+    float rate=particles*p/saturation,perCount=maximum/particles*saturation;
+    return grain_poisson(rate,random)*perCount;
+}
+kernel void particle_noise(device const float4* density [[buffer(0)]],device float4* output [[buffer(1)]],
+                           constant float4* p [[buffer(2)]],constant uint4& shape [[buffer(3)]],
+                           constant uint2& seed [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i>=shape.x)return;
+    ulong pixel=(ulong(shape.w)<<32)+ulong(shape.z)+ulong(i);
+    float3 result;
+    for(uint ch=0;ch<3;++ch) {
+        GrainStream random={pixel,shape.y+ch,seed,0,4,uint4(0)};
+        result[ch]=grain_particle(density[i][ch],p[0][ch],p[1][ch],p[2][ch],random);
+    }
+    output[i]=float4(result,0);
+}

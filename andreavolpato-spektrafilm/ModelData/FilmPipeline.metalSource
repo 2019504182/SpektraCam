@@ -1,0 +1,125 @@
+// Photochemical image graph composed from verified spektrafilm 3bb2c2d stages. GPLv3.
+// Compiled after ColorPipeline, Spatial, Grain and Diffusion shader resources.
+#define FILM_MODEL_ARGS \
+device const float4 *input [[buffer(0)]],device float4 *output [[buffer(1)]], \
+device const float4 *filmTable [[buffer(2)]],device const float4 *filmCurve [[buffer(3)]], \
+device const float4 *couplerCurve [[buffer(4)]],device const float4 *printCurve [[buffer(5)]], \
+device const float4 *printBasis [[buffer(6)]],device const float4 *scanBasis [[buffer(7)]], \
+device const float *boundary [[buffer(8)]],constant float4 *p [[buffer(9)]], \
+constant uint4 &shape [[buffer(10)]],constant uint4 &flags [[buffer(11)]],uint pixel [[thread_position_in_grid]]
+
+kernel void camera_exposure_image(FILM_MODEL_ARGS) {
+    if(pixel<shape.x)output[pixel]=float4(camera_exposure(input[pixel].xyz,filmTable,p,shape.y),0);
+}
+kernel void film_development_image(FILM_MODEL_ARGS,device float4 *logFrame [[buffer(12)]],device float4 *inhibition [[buffer(13)]]) {
+    if(pixel>=shape.x)return;
+    float3 logRaw=log10(max(input[pixel].xyz*p[30].w,float3(0))+1e-10f);
+    float3 density=lookup_curve(logRaw,filmCurve,shape.z);
+    logFrame[pixel]=float4(logRaw,0);output[pixel]=float4(density,0);
+    float3 silver=flags.y!=0?p[1].xyz-density:density;
+    inhibition[pixel]=float4(flags.x!=0?apply_basis(p,5,silver):float3(0),0);
+}
+kernel void coupler_development_image(FILM_MODEL_ARGS,device const float4 *logFrame [[buffer(12)]]) {
+    if(pixel<shape.x)output[pixel]=float4(lookup_curve(logFrame[pixel].xyz-input[pixel].xyz,couplerCurve,shape.z),0);
+}
+kernel void paper_exposure_image(FILM_MODEL_ARGS) {
+    if(pixel<shape.x)output[pixel]=float4(paper_exposure(input[pixel].xyz,printBasis,p,flags.w)*p[31].x,0);
+}
+kernel void paper_development_image(FILM_MODEL_ARGS) {
+    if(pixel<shape.x)output[pixel]=float4(lookup_curve(log10(max(input[pixel].xyz,float3(0))+1e-10f),printCurve,shape.w),0);
+}
+kernel void scan_image_xyz(FILM_MODEL_ARGS) {
+    if(pixel>=shape.x)return;
+    float3 xyz=scan_spectrum(input[pixel].xyz,scanBasis,flags.w);
+    if(p[30].z!=0)xyz*=clamp(p[30].x*xyz.y+p[30].y,0.0f,1.0f)/(xyz.y+1e-10f);
+    output[pixel]=float4(xyz,0);
+}
+kernel void compress_image_gamut(FILM_MODEL_ARGS) {
+    if(pixel<shape.x)output[pixel]=float4(compress_rgb(apply_basis(p,10,input[pixel].xyz),boundary,p),0);
+}
+kernel void encode_image_srgb(FILM_MODEL_ARGS, device atomic_uint *invalid [[buffer(12)]]) {
+    if(pixel>=shape.x)return;
+    float3 value=encode_output(input[pixel].xyz,p);
+    if(!all(isfinite(value)))atomic_store_explicit(invalid,1u,memory_order_relaxed);
+    output[pixel]=float4(value,1);
+}
+#undef FILM_MODEL_ARGS
+
+kernel void mix_images(device const float4 *a [[buffer(0)]],device const float4 *b [[buffer(1)]],
+                       device float4 *output [[buffer(2)]],constant float4 *coefficients [[buffer(3)]],
+                       constant uint& count [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i<count)output[i]=float4((a[i].xyz*coefficients[0].xyz+b[i].xyz*coefficients[1].xyz)/coefficients[2].xyz,0);
+}
+kernel void image_maximum(device const float4 *input [[buffer(0)]],device atomic_uint *maximum [[buffer(1)]],
+                          constant uint& count [[buffer(2)]],uint i [[thread_position_in_grid]],ushort lane [[thread_index_in_simdgroup]]) {
+    if(i>=count)return;
+    float3 value=input[i].xyz;float m=simd_max(max(max(value.x,value.y),max(value.z,0.0f)));
+    if(lane==0)atomic_fetch_max_explicit(maximum,as_type<uint>(m),memory_order_relaxed);
+}
+inline float exp_minus_one_minus_x(float x) {
+    if(abs(x)>=0.05f)return exp(x)-x-1;
+    float term=x*x*0.5f,result=term;
+    for(uint n=3;n<=9;++n){term*=x/float(n);result+=term;}return result;
+}
+kernel void boost_image(device const float4 *input [[buffer(0)]],device float4 *output [[buffer(1)]],
+                        device const atomic_uint *maximum [[buffer(2)]],constant float4& p [[buffer(3)]],
+                        constant uint& count [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i>=count)return;
+    float m=as_type<float>(atomic_load_explicit(maximum,memory_order_relaxed));float3 value=input[i].xyz;
+    float x0=min(max(p.z,0.0f),m);
+    if(m>0&&x0<m) {
+        float scale=p.x/exp_minus_one_minus_x(p.y*(1-x0/m))*m;
+        for(uint c=0;c<3;++c)if(value[c]>x0)value[c]+=scale*exp_minus_one_minus_x(p.y*(value[c]-x0)/m);
+    }
+    output[i]=float4(value,0);
+}
+kernel void grain_layers_image(device const float4 *density [[buffer(0)]],device float4 *first [[buffer(1)]],
+                               device float4 *second [[buffer(2)]],device float4 *third [[buffer(3)]],
+                               device const float4 *curves [[buffer(4)]],constant float4 *p [[buffer(5)]],
+                               constant uint4& shape [[buffer(6)]],constant uint2& seed [[buffer(7)]],
+                               constant uint2& offset [[buffer(8)]],uint i [[thread_position_in_grid]]) {
+    if(i>=shape.x)return;
+    bool layers=shape.z!=0,positive=(shape.w&1)!=0;
+    float3 split[3];
+    if(layers)for(uint ch=0;ch<3;++ch) {
+        float value=density[i][ch]*(positive?-1.0f:1.0f);
+        float3 layer=lookup_curve(float3(value),curves+ch*shape.y,shape.y);
+        split[0][ch]=layer.x;split[1][ch]=layer.y;split[2][ch]=layer.z;
+    }
+    uint n=layers?3:1;ulong pixel=(ulong(offset.y)<<32)+ulong(offset.x)+ulong(i);
+    for(uint layer=0;layer<n;++layer) {
+        float3 value=layers?split[layer]+p[6+layer].xyz:density[i].xyz+p[6].xyz,result;
+        for(uint ch=0;ch<3;++ch) {
+            // Poisson addition collapses simple sublayers without changing their noise law.
+            uint domain=layers?layer*3+ch:((shape.w>>1)-1)*2048+ch;
+            GrainStream random={pixel,domain,seed,0,4,uint4(0)};
+            result[ch]=grain_particle(value[ch],p[layer][ch],p[3+layer][ch],p[9][ch],random);
+        }
+        if(layer==0)first[i]=float4(result,0);else if(layer==1)second[i]=float4(result,0);else third[i]=float4(result,0);
+    }
+}
+kernel void random_lognormal_image(device float4 *output [[buffer(0)]],constant float2& p [[buffer(1)]],
+                                   constant uint4& shape [[buffer(2)]],constant uint2& seed [[buffer(3)]],
+                                   constant uint& independent [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i>=shape.x)return;
+    float variance=log(1+(p.y/p.x)*(p.y/p.x)),sigma=sqrt(variance),mu=log(p.x)-variance*0.5f;
+    float3 value;ulong pixel=(ulong(shape.w)<<32)+ulong(shape.z)+ulong(i);
+    for(uint ch=0;ch<(independent!=0?3:1);++ch) {
+        GrainStream random={pixel,shape.y+ch,seed,0,4,uint4(0)};
+        float normal=sigma<1e-6f?0:sqrt(-2*log(grain_uniform(random)))*cos(2*M_PI_F*grain_uniform(random));
+        value[ch]=exp(mu+sigma*normal);
+    }
+    if(independent==0)value=float3(value.x);output[i]=float4(value,0);
+}
+kernel void finish_grain_image(device const float4 *first [[buffer(0)]],device const float4 *second [[buffer(1)]],
+                               device const float4 *third [[buffer(2)]],device const float4 *micro [[buffer(3)]],
+                               device float4 *output [[buffer(4)]],constant float4& minimum [[buffer(5)]],
+                               constant uint4& shape [[buffer(6)]],uint i [[thread_position_in_grid]]) {
+    if(i>=shape.x)return;float3 value=first[i].xyz;
+    if(shape.y==3)value+=second[i].xyz+third[i].xyz;
+    if(shape.z!=0)value*=micro[i].xyz;output[i]=float4(value-minimum.xyz,0);
+}
+kernel void apply_glare_image(device float4 *xyz [[buffer(0)]],device const float4 *glare [[buffer(1)]],
+                              constant float4& white [[buffer(2)]],constant uint& count [[buffer(3)]],uint i [[thread_position_in_grid]]) {
+    if(i<count)xyz[i].xyz+=white.xyz*(glare[i].x/100.0f);
+}

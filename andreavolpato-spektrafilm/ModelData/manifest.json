@@ -1,0 +1,19 @@
+{
+  "revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "files": {
+    "CHANGELOG.txt": "e3eb984e4a3f4d2e17f521d6c85591a61b5372e14dbac2e3589f90962559c25c",
+    "ColorPipeline.metalSource": "c89b917b8617c0e558f8e41015f73aceae5d46aa48b27ae83fba4d55bc06fbdd",
+    "Diffusion.metalSource": "0de5244e97282972af4b2200ff2773b471a00f0c5a423714d2a1e6b73b2684f8",
+    "FilmPipeline.metalSource": "1d494fb4c9e90c734ee016c95431158979d40d6bd6ff737e02ae64072600a1e6",
+    "GamutBoundary.f64": "e1f1482ad98b80323fa219b4523a7b6446439f32d9c7de78a92c2cb0be529eaa",
+    "Grain.metalSource": "88baedd6f4ee9393e90c24215867bdda261d732334cce769c7ba53e86e7eeec9",
+    "HanatosSpectra.f16": "46f9b945ae486c0369a978df59a355ad8734537bc48c9e0ee68039185ba690d8",
+    "HanatosTables.f64": "6798286a046eddb4fa69ad1f97c034c2caab9bdb42def7bf226d633fcaa9fe65",
+    "InputCompressionMaps.f64": "76e2205bb28bad52e3f31e79acb49da2ee8f31bbfa96a3462cf513dc2b8ac0fe",
+    "LICENSE.txt": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "SPEKTRAFILM_LICENSE.txt": "76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9",
+    "Spatial.metalSource": "2e0ecf6222342af88c19eb977a08da52435daf5323f0e620578c664b16b84188",
+    "StockProfiles.json": "945fc3c28369a48d3ce7c0bef2749c1fb670d17d5392dc8d02e1d05aa1d95b25",
+    "ThirdPartyNotices.txt": "099c11139466cdb04ec1eda61e32b441483fa684163ce06f76b45d2a87259dcc"
+  }
+}
