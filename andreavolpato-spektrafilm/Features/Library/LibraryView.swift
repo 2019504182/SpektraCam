@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     let library: PhotoLibrary
+    var onClose: (() -> Void)? = nil
     @State private var path: [UUID] = []
     @State private var filter = LibraryFilter.all
     @State private var selecting = false
@@ -15,6 +16,8 @@ struct LibraryView: View {
     @State private var progress = ""
     @State private var failure: String?
     @State private var confirmDelete = false
+    @State private var confirmRevert = false
+    @State private var showLUTs = false
     @State private var scrollRevision = 0
     private enum ImportSource { case photos, files }
     private var visible: [LibraryPhoto] { library.photos.filter { filter.includes($0) } }
@@ -32,9 +35,29 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: $path) {
             gallery
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Text(
+                        selecting
+                            ? "\(selection.count) selected"
+                            : "\(visible.count) \(visible.count == 1 ? "photo" : "photos")"
+                    )
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.vertical, 6).frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("library.count")
+                }
+                .sheet(isPresented: $showLUTs) { LUTLibraryView(library: library) }
                 .navigationTitle("Library").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { CameraButton() }
+                    ToolbarItem(placement: .topBarLeading) {
+                        if let onClose {
+                            Button("Close Library", systemImage: "xmark", action: onClose).buttonBorderShape(
+                                .circle
+                            )
+                            .accessibilityIdentifier("camera.library.close")
+                        } else {
+                            CameraButton()
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Picker("Show", selection: $filter) {
@@ -61,29 +84,52 @@ struct LibraryView: View {
                         .accessibilityIdentifier("library.select").disabled(working || visible.isEmpty)
                     }
                     ToolbarItem(placement: .bottomBar) {
-                        Menu {
-                            Button("From Photos", systemImage: "photo.on.rectangle") {
-                                picked = library.importedAssetIdentifiers.map {
-                                    PhotosPickerItem(itemIdentifier: $0)
+                        if selecting {
+                            Button("Revert", systemImage: "arrow.uturn.backward") { confirmRevert = true }
+                                .accessibilityIdentifier("library.revert")
+                                .disabled(
+                                    working
+                                        || !library.photos.contains {
+                                            selection.contains($0.id) && $0.hasEdits
+                                        }
+                                )
+                                .confirmationDialog(
+                                    "Revert selected photos?", isPresented: $confirmRevert,
+                                    titleVisibility: .visible
+                                ) {
+                                    Button("Revert to Original", role: .destructive) {
+                                        let ids = selection
+                                        working = true
+                                        Task {
+                                            do { try await library.revert(ids) } catch {
+                                                failure = error.localizedDescription
+                                            }
+                                            working = false
+                                        }
+                                    }
+                                } message: {
+                                    Text("This removes all edits from the selected app copies.")
                                 }
-                                importSource = .photos
+                        } else {
+                            Menu {
+                                Button("From Photos", systemImage: "photo.on.rectangle") {
+                                    picked = library.importedAssetIdentifiers.map {
+                                        PhotosPickerItem(itemIdentifier: $0)
+                                    }
+                                    importSource = .photos
+                                }
+                                Button("From Files", systemImage: "folder") { importSource = .files }
+                            } label: {
+                                Label("Import", systemImage: "plus")
                             }
-                            Button("From Files", systemImage: "folder") { importSource = .files }
-                        } label: {
-                            Label("Import", systemImage: "plus")
+                            .accessibilityIdentifier("library.import").disabled(working)
                         }
-                        .accessibilityIdentifier("library.import").disabled(working)
                     }
                     ToolbarItem(placement: .bottomBar) { Spacer() }
                     ToolbarItem(placement: .bottomBar) {
-                        Text(
-                            selecting
-                                ? "\(selection.count) selected"
-                                : "\(visible.count) \(visible.count == 1 ? "photo" : "photos")"
-                        )
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("library.count")
-                    }.sharedBackgroundVisibility(.hidden)
+                        Button("LUT Manager") { showLUTs = true }
+                            .accessibilityIdentifier("library.luts").disabled(working)
+                    }
                     ToolbarItem(placement: .bottomBar) { Spacer() }
                     ToolbarItem(placement: .bottomBar) {
                         Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true }

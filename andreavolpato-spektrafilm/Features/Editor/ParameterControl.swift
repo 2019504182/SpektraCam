@@ -5,6 +5,9 @@ import UIKit
 struct ParameterControl: View {
     let definition: ParameterDefinition
     let session: EditorSession
+    private var boundedScatter: Bool {
+        session.recipe.look.mode == .lut && definition.id == "film_render.halation.scatter_amount"
+    }
 
     var body: some View {
         if definition.defaultFlag != nil {
@@ -36,11 +39,14 @@ struct ParameterControl: View {
             NumericControl(
                 title: definition.title,
                 value: Binding(
-                    get: { session.recipe.number(definition.id) },
+                    get: {
+                        let value = session.recipe.number(definition.id)
+                        return boundedScatter ? min(max(value, 0), 1) : value
+                    },
                     set: { value in session.update(key: definition.id) { $0.numbers[definition.id] = value } }
                 ),
-                range: definition.sliderRange, step: definition.step,
-                minimum: definition.minimum, maximum: definition.maximum,
+                range: boundedScatter ? 0...1 : definition.sliderRange, step: definition.step,
+                minimum: definition.minimum, maximum: boundedScatter ? 1 : definition.maximum,
                 unit: definition.unit, identifier: definition.id,
                 defaultValue: session.recipe.defaultNumber(definition.id),
                 onEditingChanged: { session.setInteraction(key: definition.id, active: $0) })
@@ -58,6 +64,8 @@ struct NumericControl: View {
     var unit = ""
     var identifier = ""
     var defaultValue = 0.0
+    var fillOrigin: Double? = nil
+    var snapsToDefault = true
     var onEditingChanged: (Bool) -> Void = { _ in }
     @State private var showEntry = false
 
@@ -79,7 +87,8 @@ struct NumericControl: View {
             }
             DefaultSlider(
                 value: $value, range: effectiveRange, step: step, defaultValue: defaultValue,
-                title: title, identifier: identifier, onEditingChanged: onEditingChanged)
+                title: title, identifier: identifier, fillOrigin: fillOrigin, snapsToDefault: snapsToDefault,
+                onEditingChanged: onEditingChanged)
         }
         .sheet(isPresented: $showEntry) {
             NumericEntry(
@@ -113,6 +122,8 @@ struct DefaultSlider: UIViewRepresentable {
     var defaultValue = 0.0
     let title: String
     let identifier: String
+    var fillOrigin: Double? = nil
+    var snapsToDefault = true
     var onEditingChanged: (Bool) -> Void = { _ in }
     private var bounds: ClosedRange<Double> {
         min(range.lowerBound, defaultValue)...max(range.upperBound, defaultValue)
@@ -122,7 +133,7 @@ struct DefaultSlider: UIViewRepresentable {
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UISlider {
-        let slider = UISlider()
+        let slider = PrecisionSlider()
         context.coordinator.slider = slider
         slider.addTarget(context.coordinator, action: #selector(Coordinator.changed), for: .valueChanged)
         slider.addTarget(context.coordinator, action: #selector(Coordinator.began), for: .touchDown)
@@ -150,17 +161,47 @@ struct DefaultSlider: UIViewRepresentable {
         slider.accessibilityIdentifier = identifier
         slider.tintColor = UIColor(Color.accentColor)
         // Keep UIKit and its tick configuration in the same normalized range.
-        let configuration = [bounds.lowerBound, bounds.upperBound, defaultValue]
+        let configuration = [
+            bounds.lowerBound, bounds.upperBound, defaultValue, fillOrigin ?? defaultValue,
+            snapsToDefault ? 1 : 0,
+        ]
         if context.coordinator.configuration != configuration {
-            slider.trackConfiguration = .init(
-                allowsTickValuesOnly: false, neutralValue: position(defaultValue),
-                ticks: [.init(position: position(defaultValue))])
+            slider.trackConfiguration =
+                snapsToDefault
+                ? .init(
+                    allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue),
+                    ticks: [.init(position: position(defaultValue))]) : nil
+            if let precise = slider as? PrecisionSlider {
+                precise.defaultTick = snapsToDefault ? nil : position(defaultValue)
+            }
             context.coordinator.configuration = configuration
         }
         if !slider.isTracking { slider.setValue(position(value), animated: false) }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISlider, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 100, height: 32)
+    }
+    /// UIKit couples configured ticks to magnetic stops. A marker view keeps fine straightening continuous.
+    final class PrecisionSlider: UISlider {
+        var defaultTick: Float? { didSet { setNeedsLayout() } }
+        private let marker = UIView()
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            marker.backgroundColor = .tertiaryLabel
+            marker.isUserInteractionEnabled = false
+            marker.isAccessibilityElement = false
+            addSubview(marker)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            marker.isHidden = defaultTick == nil
+            if let value = defaultTick {
+                let track = trackRect(forBounds: bounds)
+                let thumb = thumbRect(forBounds: bounds, trackRect: track, value: value)
+                marker.frame = CGRect(x: thumb.midX - 0.5, y: track.midY - 3, width: 1, height: 6)
+            }
+        }
     }
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: DefaultSlider

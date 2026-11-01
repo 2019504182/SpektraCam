@@ -122,13 +122,20 @@ nonisolated enum SourceImageRenderer {
             size: CGSize(width: input.width, height: input.height), format: .RGBAf, colorSpace: linear)
     }
 
+    static func workingImage(_ input: Input) throws -> CGImage {
+        let source = image(input)
+        guard let frame = context.createCGImage(source, from: source.extent, format: .RGBAf, colorSpace: linear, deferred: false) else { throw Failure.decode }
+        return frame
+    }
     /// Blend in linear light, then return the same explicit SDR sRGB boundary as film output.
     static func blend(film: CGImage, source: Input, amount: Double) throws -> CGImage {
         if amount >= 1 { return film }
-        let bytes = source.pixels.withUnsafeBytes { Data($0) }
-        let original = CIImage(
-            bitmapData: bytes, bytesPerRow: source.width * 16,
-            size: CGSize(width: source.width, height: source.height), format: .RGBAf, colorSpace: linear)
+        return try blend(film: film, sourceImage: workingImage(source), amount: amount)
+    }
+    static func blend(film: CGImage, sourceImage: CGImage, amount: Double) throws -> CGImage {
+        if amount >= 1 { return film }
+        let original = CIImage(cgImage: sourceImage)
+
         let output = original.applyingFilter(
             "CIDissolveTransition",
             parameters: [
@@ -136,8 +143,8 @@ nonisolated enum SourceImageRenderer {
             ])
         guard
             let image = context.createCGImage(
-                output, from: original.extent, format: .RGBA8,
-                colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, deferred: false)
+                output, from: original.extent, format: .RGBAf,
+                colorSpace: linear, deferred: false)
         else { throw Failure.decode }
         return image
     }

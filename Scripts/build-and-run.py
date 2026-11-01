@@ -10,6 +10,10 @@ ENV["DEVELOPER_DIR"] = "/Applications/Xcode.app/Contents/Developer"
 SIM = ENV["DEVELOPER_DIR"] + "/usr/bin/simctl"
 result = subprocess.run([SIM, "list", "devices", "available", "--json"], env=ENV, text=True, capture_output=True, check=True)
 devices = [device for group in json.loads(result.stdout)["devices"].values() for device in group if device["state"] == "Booted"]
+requested_simulator = os.environ.get("SPEKTRACAM_SIMULATOR_ID")
+if requested_simulator:
+    devices = [device for device in devices if device["udid"] == requested_simulator]
+    if not devices: raise SystemExit("The selected Simulator is not booted.")
 ui_tests = "--ui-tests" in sys.argv
 if ui_tests and not devices:
     raise SystemExit("Boot a Simulator before running UI checks.")

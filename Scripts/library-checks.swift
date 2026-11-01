@@ -91,10 +91,64 @@ import UniformTypeIdentifiers
             "Interrupted delete lost the original")
         let restored = try library!.recipe(photo.id)
         precondition(restored == recipe, "Restart lost edits")
+        try await library!.revert([photo.id])
+        precondition(library!.photo(photo.id)?.hasEdits == false)
+        library = nil
+        library = try PhotoLibrary(root: root, cache: cache, modelDirectory: dataDirectory)
+        let reverted = try library!.recipe(photo.id)
+        let revertedBytes = try Data(contentsOf: library!.files.sourceURL(photo))
+        precondition(reverted == nil && revertedBytes == originalBytes)
+        try await library!.finishEditing(photo.id, recipe: recipe, preview: nil)
+        print("PASS: revert clears the saved recipe across restart and preserves original bytes")
         try FileManager.default.removeItem(at: cache)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let rebuilt = try await library!.images.image(library!.photo(photo.id)!, thumbnail: false)
         precondition(rebuilt.width == rendered.width && rebuilt.height == rendered.height)
+        let cubeFile = temporary.appendingPathComponent("Identity.cube")
+        var cubeText = "LUT_3D_SIZE 2\n"
+        for b in 0...1 { for g in 0...1 { for r in 0...1 { cubeText += "\(r) \(g) \(b)\n" } } }
+        try Data(cubeText.utf8).write(to: cubeFile)
+        let lut = try await library!.luts.importFile(cubeFile)
+        var lutRecipe = recipe
+        lutRecipe.look.mode = .lut
+        lutRecipe.look.first.id = lut.id
+        try await library!.finishEditing(photo.id, recipe: lutRecipe, preview: nil)
+        library = nil
+        library = try PhotoLibrary(root: root, cache: cache, modelDirectory: dataDirectory)
+        try await library!.luts.load()
+        precondition(library!.usedLUTIdentifiers.contains(lut.id), "Restart lost the saved LUT reference")
+        do {
+            try await library!.luts.remove([lut.id], protected: library!.usedLUTIdentifiers)
+            preconditionFailure("Deleted a LUT used by a saved photo")
+        } catch {}
+        let lutPreview = try await library!.images.image(library!.photo(photo.id)!, thumbnail: false)
+        precondition(lutPreview.width == 24 && lutPreview.height == 32)
+        try await library!.finishEditing(photo.id, recipe: recipe, preview: nil)
+        try await library!.luts.remove([lut.id], protected: library!.usedLUTIdentifiers)
+        print("PASS: saved LUT recipe restart, edited cache rebuild and deletion protection")
+        let tallFile = temporary.appendingPathComponent("tall.png")
+        let tall = CGContext(
+            data: nil, width: 640, height: 1280, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        tall.setFillColor(CGColor(red: 0.4, green: 0.5, blue: 0.6, alpha: 1))
+        tall.fill(CGRect(x: 0, y: 0, width: 640, height: 1280))
+        let tallDestination = CGImageDestinationCreateWithURL(
+            tallFile as CFURL, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(tallDestination, tall.makeImage()!, nil)
+        precondition(CGImageDestinationFinalize(tallDestination))
+        let tallPhoto = try await library!.importPhoto(tallFile)
+        try await library!.finishEditing(tallPhoto.id, recipe: EditRecipe(), preview: nil)
+        let editedTall = library!.photo(tallPhoto.id)!
+        let grid = try await library!.images.image(editedTall, thumbnail: true)
+        let earlyPreview = await library!.files.cachedImage(editedTall, thumbnail: false)
+        precondition(
+            max(grid.width, grid.height) == 384 && earlyPreview == nil,
+            "Grid rebuild made a full preview or stored its small image as the photo preview")
+        let viewer = try await library!.images.image(editedTall, thumbnail: false)
+        precondition(max(viewer.width, viewer.height) == 1080, "Grid resolution leaked into the photo view")
+        try await library!.delete([tallPhoto.id])
+        print("PASS: independent 384 px grid rebuild and 1080 px photo preview")
         // Real local sources use the same importer. They stay outside the app store.
         for path in CommandLine.arguments.dropFirst(2) {
             let url = URL(fileURLWithPath: path)
@@ -110,6 +164,47 @@ import UniformTypeIdentifiers
             precondition(after == bytes)
             print("PASS: library import, type filter and source preservation: \(url.lastPathComponent)")
         }
+        // Exercise the durable inbox with source bytes, without simulating camera hardware.
+        let captureRoot = temporary.appendingPathComponent("CaptureLibrary")
+        let captureCache = temporary.appendingPathComponent("CaptureCache")
+        let inbox = CameraInbox(root: captureRoot)
+        let captureSources = CommandLine.arguments.dropFirst(2).map { URL(fileURLWithPath: $0) }
+        for url in captureSources.isEmpty ? [source] : captureSources {
+            let bytes = try Data(contentsOf: url)
+            let pending = try inbox.store(bytes)
+            var captureLibrary: PhotoLibrary? = try PhotoLibrary(
+                root: captureRoot, cache: captureCache, modelDirectory: dataDirectory)
+            precondition(
+                FileManager.default.fileExists(atPath: pending.path), "Startup removed an unindexed capture")
+            let recoveredCount = try await captureLibrary!.recoverCaptures()
+            precondition(recoveredCount == 1)
+            precondition(!FileManager.default.fileExists(atPath: pending.path))
+            let captured = captureLibrary!.photos.last!
+            let recoveredBytes = try Data(contentsOf: captureLibrary!.files.sourceURL(captured))
+            precondition(recoveredBytes == bytes)
+            try await captureLibrary!.finishEditing(captured.id, recipe: recipe, preview: nil)
+            _ = try inbox.store(bytes)
+            captureLibrary = nil
+            captureLibrary = try PhotoLibrary(
+                root: captureRoot, cache: captureCache, modelDirectory: dataDirectory)
+            let duplicateCount = try await captureLibrary!.recoverCaptures()
+            let savedRecipe = try captureLibrary!.recipe(captured.id)
+            precondition(duplicateCount == 1 && captureLibrary!.photos.count == 1 && savedRecipe == recipe)
+            try await captureLibrary!.delete([captured.id])
+        }
+        let damaged = try inbox.store(Data([0, 1, 2]))
+        let captureLibrary = try PhotoLibrary(
+            root: captureRoot, cache: captureCache, modelDirectory: dataDirectory)
+        do {
+            try await captureLibrary.recoverCaptures()
+            preconditionFailure("A damaged capture was accepted")
+        } catch {
+            precondition(
+                FileManager.default.fileExists(atPath: damaged.path), "Failed import lost the capture")
+        }
+        print(
+            "PASS: capture inbox restart, exact original bytes, duplicate edit preservation and failed-import retention"
+        )
         let fallback = temporary.appendingPathComponent("fallback.png")
         let png = CGImageDestinationCreateWithURL(
             fallback as CFURL, UTType.png.identifier as CFString, 1, nil)!

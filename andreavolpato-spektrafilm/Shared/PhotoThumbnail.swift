@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Keep the camera position visible until capture is built.
+/// Reuse the root camera presentation from the library, photo and editor.
 struct CameraButton: View {
+    @Environment(\.openCamera) private var openCamera
     var body: some View {
-        Button("Camera", systemImage: "camera") {}.buttonBorderShape(.circle).disabled(true)
-            .accessibilityHint("Camera capture is not available yet.")
+        Button("Camera", systemImage: "camera") { openCamera?() }
+            .buttonBorderShape(.circle).disabled(openCamera == nil)
+            .accessibilityIdentifier("camera.open")
     }
 }
 

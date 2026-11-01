@@ -2,6 +2,11 @@ import SwiftUI
 
 /// Two native browsing columns keep stock names visible and selections one tap away.
 struct DevelopPanel: View {
+    // Stock list spacing, in points. Change these values to test the layout.
+    private let stockRowHeight: CGFloat = 36
+    private let stockRowSpacing: CGFloat = 0
+    private let stockSelectionHeight: CGFloat = 30
+
     let session: EditorSession
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var filmCategory: FilmStock.Category
@@ -35,7 +40,7 @@ struct DevelopPanel: View {
                             film: false
                         )
                         .disabled(session.recipe.bypassesPrint)
-                        scanControls
+                        directScan
                     }
                 }
             } else {
@@ -47,10 +52,9 @@ struct DevelopPanel: View {
                         "Print", categories: FilmStock.Category.prints, selection: $printCategory,
                         stocks: FilmStock.prints, selected: session.recipe.printID, film: false
                     )
-                    .disabled(session.recipe.bypassesPrint)
                 }
             }
-            if !typeSize.isAccessibilitySize { scanControls }
+            mixControl
         }
         .onChange(of: session.recipe.filmID) { _, id in
             if let category = FilmStock.films.first(where: { $0.id == id })?.category {
@@ -64,30 +68,31 @@ struct DevelopPanel: View {
         }
     }
 
-    private var scanControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            NumericControl(
-                title: "Mix",
-                value: Binding(
-                    get: { session.recipe.mix * 100 },
-                    set: { value in session.update(key: "mix") { $0.mix = value / 100 } }),
-                range: 0...100, step: 1, minimum: 0, maximum: 100, unit: "%", identifier: "develop.mix",
-                defaultValue: 100,
-                onEditingChanged: { session.setInteraction(key: "mix", active: $0) })
+    private var mixControl: some View {
+        NumericControl(
+            title: "Mix",
+            value: Binding(
+                get: { session.recipe.mix * 100 },
+                set: { value in session.update(key: "mix") { $0.mix = value / 100 } }),
+            range: 0...100, step: 1, minimum: 0, maximum: 100, unit: "%", identifier: "develop.mix",
+            defaultValue: 100, fillOrigin: 0,
+            onEditingChanged: { session.setInteraction(key: "mix", active: $0) })
+    }
+    private var directScan: some View {
+        DisclosureGroup("Scan") {
             Toggle("Scan film directly", isOn: session.binding(\.scanFilm, key: "route"))
                 .accessibilityIdentifier("develop.scanFilm")
             if session.recipe.bypassesPrint {
-                Text("Direct scan · print settings are bypassed")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("Print settings are bypassed.").font(.caption2).foregroundStyle(.secondary)
             }
-        }
+        }.font(.caption).padding(.top, 8)
     }
 
     private func categoryControl(
         _ title: String, categories: [FilmStock.Category], selection: Binding<FilmStock.Category>
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline.weight(.semibold))
+            Text(title).font(.caption.weight(.semibold))
             Picker(title + " category", selection: selection) {
                 ForEach(categories) { category in
                     Text(category.shortTitle).tag(category).accessibilityLabel(category.title)
@@ -106,9 +111,14 @@ struct DevelopPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             categoryControl(title, categories: categories, selection: selection)
+                .disabled(!film && session.recipe.bypassesPrint)
             ScrollViewReader { proxy in
                 ScrollView {
-                    stockRows(stocks, category: selection.wrappedValue, selected: selected, film: film)
+                    VStack(spacing: 4) {
+                        stockRows(stocks, category: selection.wrappedValue, selected: selected, film: film)
+                            .disabled(!film && session.recipe.bypassesPrint)
+                        if !film { directScan }
+                    }
                 }
                 .clipped()
                 .onAppear { proxy.scrollTo(selected, anchor: .center) }
@@ -120,43 +130,55 @@ struct DevelopPanel: View {
     }
 
     private func stockButton(_ stock: FilmStock, selected: Bool, film: Bool) -> some View {
-        let button = Button {
+        Button {
             if film {
                 session.selectFilm(stock)
             } else {
                 session.update(key: "print") { $0.printID = stock.id }
             }
         } label: {
-            HStack(spacing: 6) {
-                Text(stock.compactName).font(.footnote)
-                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.accentColor).frame(width: 16).opacity(selected ? 1 : 0)
-                    .accessibilityHidden(true)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .font(.subheadline).contentShape(Rectangle())
-        }
-        return button.buttonStyle(.plain)
-            .foregroundStyle(Color.primary)
-            .padding(.horizontal, 6)
-            .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: .rect(cornerRadius: 12))
+            VStack(spacing: 0) {
+                Group {
+                    if selected {
+                        stockLabel(stock, selected: true).glassEffect(
+                            .regular.tint(.accentColor).interactive(), in: .rect(cornerRadius: 10))
+                    } else {
+                        stockLabel(stock, selected: false)
+                    }
+                }
+            }.frame(minHeight: typeSize.isAccessibilitySize ? 44 : stockRowHeight).contentShape(.rect)
+        }.buttonStyle(.plain)
     }
-
+    private func stockLabel(_ stock: FilmStock, selected: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(stock.compactName).font(.caption)
+                .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+            Image(systemName: "checkmark").font(.caption.weight(.semibold))
+                .frame(width: 12).opacity(selected ? 1 : 0).accessibilityHidden(true)
+        }
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .padding(.horizontal, 6).frame(maxWidth: .infinity, minHeight: stockSelectionHeight)
+    }
     private func stockRows(_ stocks: [FilmStock], category: FilmStock.Category, selected: String, film: Bool)
         -> some View
     {
-        GlassEffectContainer(spacing: 8) {
-            LazyVStack(spacing: 2) {
-                ForEach(stocks.filter { $0.category == category }) { stock in
+        let matches = stocks.filter { $0.category == category }
+        return GlassEffectContainer(spacing: 2) {
+            LazyVStack(spacing: stockRowSpacing) {
+                ForEach(Array(matches.enumerated()), id: \.element.id) { index, stock in
+                    if index > 0 && manufacturer(matches[index - 1]) != manufacturer(stock) {
+                        Divider().padding(.vertical, 5)
+                    }
                     stockButton(stock, selected: stock.id == selected, film: film)
                         .accessibilityLabel(stock.name)
                         .accessibilityAddTraits(stock.id == selected ? .isSelected : [])
-                        .accessibilityIdentifier("develop.stock." + stock.id)
-                        .id(stock.id)
+                        .accessibilityIdentifier("develop.stock." + stock.id).id(stock.id)
                 }
             }
         }
+    }
+    private func manufacturer(_ stock: FilmStock) -> String {
+        stock.id.components(separatedBy: "_").first ?? stock.id
     }
 }

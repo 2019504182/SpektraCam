@@ -14,11 +14,29 @@ It also has the system share sheet.
 Import from Photos or Files. Photos appear in capture-date order, with the newest capture dates at the bottom.
 The library has RAW and Rendered filters. Tap a photo, then tap Develop.
 The app keeps the original file and saves edits as a versioned recipe.
+The library uses cached 384 px thumbnails and shares render resources when it rebuilds them.
 Editing uses a floating-point preview at 1080 px on the long edge. Export can use the original resolution.
 Thumbnails and previews can be rebuilt. Delete removes only the app copy and its edits.
-Camera capture is not available yet.
 
-Version 0.2 is planned for RAW camera capture.
+## Current work: 0.2.0
+
+The RAW camera needs physical-device tests before the release tag.
+It captures DNG only and offers Apple ProRAW or Bayer RAW when available.
+Lens buttons use physical cameras at their native focal lengths.
+It has a preview histogram, exposure readout, grid, and shutter haptic.
+Captured DNG files stay in a recovery inbox until library import succeeds.
+Simulator shows an unavailable state; it cannot capture photos.
+
+Develop has two 3D `.cube` LUT slots with separate Mix controls.
+Use LUTs made for encoded sRGB photos. Log and HDR input transforms are not supported.
+The library LUT Manager shares import, rename and batch deletion with the editor picker.
+LUTs used by saved edits or Undo cannot be deleted.
+LUT mode skips film/print color. Halation and diffusion act on linear RGB before the LUTs.
+A Portra 400 grain noise layer follows the LUTs. Grain Blur smooths the noise without blurring photo edges.
+These effects are an RGB adaptation. They do not form a full spectral emulsion model.
+
+Exposure, S-curve, pivot, highlights, shadows, white balance and saturation precede Develop.
+Processing keeps floating-point headroom until the final SDR conversion.
 
 ## Build
 
@@ -37,7 +55,7 @@ Folders in Xcode match the folders on disk. See [Apple's folder guide](https://d
 | Folder | Contents |
 | --- | --- |
 | `App` | App start and root view |
-| `Features` | Library, Viewer, Editor, and Export |
+| `Features` | Library, Viewer, Editor, Export, Camera, and LUT |
 | `Shared` | Reused views and photo badges |
 | `Models` | Edit recipe, profiles, and metadata |
 | `Rendering` | CPU and Metal processing |
@@ -61,6 +79,13 @@ Run the UI tests:
 python3 Scripts/build-and-run.py --ui-tests
 ```
 
+Set `SPEKTRACAM_SIMULATOR_ID` to select a booted test Simulator.
+Test two local LUTs without adding them to the repository:
+
+```sh
+python3 Scripts/core-checks.py lut preview --input /path/first.cube /path/second.cube
+```
+
 The pinned Python reference has 189 passed tests and four known test failures.
 The native tests use the reference data in `Reference/Fixtures`.
 
@@ -69,7 +94,7 @@ The native tests use the reference data in `Reference/Fixtures`.
 Complete performance tests on a physical iPhone.
 Decrease memory use for large RAW exports and diffusion.
 Validate genuine iPhone and Indigo DNG files.
-Complete these checks before the version 0.2 release.
+Complete these checks before the 0.2.0 release tag.
 
 Current export format: SDR, sRGB, 8-bit.
 

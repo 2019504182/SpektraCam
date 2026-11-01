@@ -10,6 +10,7 @@ nonisolated struct FilmPipeline: Sendable {
     let film: ModelLibrary.Profile
     let reference: ReferenceCorrectionCore
     init(library: ModelLibrary, recipe: EditRecipe) throws {
+        try RawAdjustments.validate(recipe.tone)
         guard recipe.numbers.values.allSatisfy(\.isFinite),
             recipe.number("film_render.density_curve_gamma") > 0,
             recipe.number("camera.film_format_mm") > 0

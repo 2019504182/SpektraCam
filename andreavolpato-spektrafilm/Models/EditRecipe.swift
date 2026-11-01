@@ -8,20 +8,68 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
         var tint = 0.0
         var saturation = 1.0
     }
-    /// Display-referred grading follows the photographic model; defaults are an identity.
+    /// RAW controls precede Develop. Whole-photo monochrome is applied at the output.
     struct Tone: Codable, Equatable, Sendable {
+        var algorithm = 2
+        var exposureEV = 0.0
         var contrast = 1.0
         var pivot = 0.35
         var shadows = 0.0
         var highlights = 0.0
         var monochrome = false
-        var isIdentity: Bool { contrast == 1 && shadows == 0 && highlights == 0 && !monochrome }
+        var rawStage: Self {
+            var copy = self
+            copy.monochrome = false
+            return copy
+        }
+        var outputStage: Self {
+            var copy = Self()
+            copy.monochrome = monochrome
+            return copy
+        }
+        var isIdentity: Bool {
+            exposureEV == 0 && contrast == 1 && shadows == 0 && highlights == 0 && !monochrome
+        }
+        init() {}
+        enum CodingKeys: String, CodingKey {
+            case algorithm, exposureEV, contrast, pivot, shadows, highlights, monochrome
+        }
+        init(from decoder: Decoder) throws {
+            let v = try decoder.container(keyedBy: CodingKeys.self)
+            algorithm = try v.decodeIfPresent(Int.self, forKey: .algorithm) ?? 1
+            exposureEV = try v.decodeIfPresent(Double.self, forKey: .exposureEV) ?? 0
+            contrast = try v.decodeIfPresent(Double.self, forKey: .contrast) ?? 1
+            pivot = try v.decodeIfPresent(Double.self, forKey: .pivot) ?? 0.35
+            shadows = try v.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
+            highlights = try v.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
+            monochrome = try v.decodeIfPresent(Bool.self, forKey: .monochrome) ?? false
+            guard (1...2).contains(algorithm) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .algorithm, in: v, debugDescription: "Unsupported tone algorithm")
+            }
+        }
     }
+    enum LookMode: String, Codable, CaseIterable, Identifiable, Sendable {
+        case spektrafilm, lut
+        var id: Self { self }
+        var title: String { self == .spektrafilm ? "Spektrafilm" : "3D LUT" }
+    }
+    struct LUTSlot: Codable, Equatable, Sendable {
+        var id: String? = nil
+        var mix = 1.0
+    }
+    struct Look: Codable, Equatable, Sendable {
+        var mode = LookMode.spektrafilm
+        var first = LUTSlot()
+        var second = LUTSlot()
+        var identifiers: Set<String> { Set([first.id, second.id].compactMap { $0 }) }
+    }
+    var look = Look()
     var tone = Tone()
     var monochromeGrain = false
     var source = Source()
     var mix = 1.0
-    var version = 2
+    var version = 3
     var upstreamRevision = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
     var filmID = "kodak_portra_400"
     var printID = "kodak_portra_endura"
@@ -35,23 +83,25 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
 
     init() {}
     enum CodingKeys: String, CodingKey {
-        case source, tone, monochromeGrain, mix, version, upstreamRevision, filmID, printID, scanFilm, crop,
+        case source, tone, look, monochromeGrain, mix, version, upstreamRevision, filmID, printID, scanFilm,
+            crop,
             geometry, temperature,
             numbers,
             flags, choices
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        look = try values.decodeIfPresent(Look.self, forKey: .look) ?? Look()
         tone = try values.decodeIfPresent(Tone.self, forKey: .tone) ?? Tone()
         monochromeGrain = try values.decodeIfPresent(Bool.self, forKey: .monochromeGrain) ?? false
         source = try values.decodeIfPresent(Source.self, forKey: .source) ?? Source()
         mix = try values.decodeIfPresent(Double.self, forKey: .mix) ?? 1
         version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 1
-        guard (1...2).contains(version) else {
+        guard (1...3).contains(version) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .version, in: values, debugDescription: "Unsupported edit-recipe version")
         }
-        version = 2  // Upgrade older recipes in memory; their neutral rendering does not change.
+        version = 3  // Tone carries its own algorithm version to preserve older grades.
         upstreamRevision =
             try values.decodeIfPresent(String.self, forKey: .upstreamRevision) ?? upstreamRevision
         filmID = try values.decodeIfPresent(String.self, forKey: .filmID) ?? filmID
@@ -69,7 +119,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
         numbers[path] ?? defaultNumber(path)
     }
     func defaultNumber(_ path: String) -> Double {
-        StockDefaults.numbers[filmID]?[path] ?? ParameterDefinition.byPath[path]?.defaultNumber ?? 0
+        StockDefaults.numbers[look.mode == .lut ? "kodak_portra_400" : filmID]?[path]
+            ?? ParameterDefinition.byPath[path]?.defaultNumber ?? 0
     }
     func flag(_ path: String) -> Bool {
         flags[path] ?? ParameterDefinition.byPath[path]?.defaultFlag ?? false
@@ -102,7 +153,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
         copy.geometry = ImageGeometry()
         return copy
     }
-    var bypassesPrint: Bool { scanFilm }
+    var bypassesPrint: Bool { look.mode == .spektrafilm && scanFilm }
 }
 
 nonisolated struct ParameterDefinition: Identifiable, Sendable {

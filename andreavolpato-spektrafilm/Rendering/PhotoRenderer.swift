@@ -6,9 +6,18 @@ import ImageIO
 /// Owns one source and one GPU worker. Preview input, baseline metering and the latest film
 /// frame are cached independently. Mix reuses the film frame; export uses original bytes.
 actor PhotoRenderer {
-    private let source: CGImage, directory: URL, data: Data?, initialTemperature: Double?
-    private var library: ModelLibrary?
-    private var gpu: MetalFilmPipeline?
+    private let source: CGImage, data: Data?, initialTemperature: Double?
+    private let previewMaximum: Int
+    private let renderResources: FilmRenderResources
+    private let lutDirectory: URL?
+    private var cubes: [String: CubeLUT] = [:]
+    private var opticsKey: EditRecipe?
+    private var opticsSize = CGSize.zero
+    private var opticsImage: CGImage?
+    private var grainKey: EditRecipe?
+    private var grainSize = CGSize.zero
+    private var grainImages: (CGImage, CGImage)?
+    private var previousMode: EditRecipe.LookMode?
     private var baseline: SourceImageRenderer.Input?
     private var baselineImage: CIImage?
     private var input: SourceImageRenderer.Input?
@@ -22,28 +31,23 @@ actor PhotoRenderer {
     private var exportSize: PhotoExporter.Size?
     private var exportImage: CGImage?
 
-    init(source: CGImage, directory: URL, data: Data? = nil, temperature: Double? = nil) {
+    init(
+        source: CGImage, directory: URL, data: Data? = nil, temperature: Double? = nil,
+        lutDirectory: URL? = nil, previewMaximum: Int = 1080, resources: FilmRenderResources? = nil
+    ) {
         self.source = source
-        self.directory = directory
+        self.previewMaximum = previewMaximum
+        renderResources = resources ?? FilmRenderResources(directory: directory)
         self.data = data
         initialTemperature = temperature
-    }
-    private func resources() throws -> (ModelLibrary, MetalFilmPipeline) {
-        if library == nil { library = try ModelLibrary(directory: directory) }
-        if gpu == nil {
-            let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
-                try String(contentsOf: directory.appendingPathComponent($0 + ".metalSource"), encoding: .utf8)
-            }
-            gpu = try MetalFilmPipeline(sources: sources)
-        }
-        return (library!, gpu!)
+        self.lutDirectory = lutDirectory
     }
     private func baselineInput() throws -> SourceImageRenderer.Input {
         if let baseline { return baseline }
         var recipe = EditRecipe()
         recipe.temperature = initialTemperature
         let result = try SourceImageRenderer.prepare(
-            data: data, fallback: source, recipe: recipe, maximum: 1080)
+            data: data, fallback: source, recipe: recipe, maximum: previewMaximum)
         baseline = result
         baselineImage = SourceImageRenderer.image(result)
         return result
@@ -77,7 +81,7 @@ actor PhotoRenderer {
                 || (recipe.temperature == initialTemperature && recipe.source.tint == 0)
             if canReuse { _ = try baselineInput() }
             result = try SourceImageRenderer.prepare(
-                data: canReuse ? nil : data, fallback: source, recipe: recipe, maximum: 1080,
+                data: canReuse ? nil : data, fallback: source, recipe: recipe, maximum: previewMaximum,
                 renderedSource: canReuse ? baselineImage : nil)
         }
         input = result
@@ -87,25 +91,153 @@ actor PhotoRenderer {
     }
     func render(_ recipe: EditRecipe) async throws -> CGImage {
         try Task.checkCancellation()
-        let (library, gpu) = try resources()
+        let (library, gpu) = try await renderResources.load()
         let input = try previewInput(recipe)
+        if previousMode != recipe.look.mode {
+            filmRecipe = nil
+            filmImage = nil
+            opticsKey = nil
+            opticsImage = nil
+            grainKey = nil
+            grainImages = nil
+            previousMode = recipe.look.mode
+        }
+        return try await frame(input, recipe: recipe, library: library, gpu: gpu, preview: true)
+    }
+    private func applications(_ recipe: EditRecipe) throws -> [CubeLUT.Application] {
+        var active: [String: CubeLUT] = [:]
+        var result: [CubeLUT.Application] = []
+        for slot in [recipe.look.first, recipe.look.second] {
+            guard let id = slot.id, slot.mix > 0 else { continue }
+            guard let lutDirectory else { throw CubeLUT.Failure.missing }
+            let cube = try active[id] ?? cubes[id] ?? CubeLUT.load(id: id, directory: lutDirectory)
+            active[id] = cube
+            result.append(.init(cube: cube, mix: slot.mix))
+        }
+        cubes = active
+        return result
+    }
+    private func effectFrames(
+        _ input: SourceImageRenderer.Input, recipe: EditRecipe,
+        library: ModelLibrary, gpu: MetalFilmPipeline, preview: Bool
+    ) async throws -> (CGImage, CGImage?, CGImage?) {
+        var physical = EditRecipe()
+        let prefixes = [
+            "film_render.grain.", "film_render.halation.", "camera.diffusion_filter.",
+            "enlarger.diffusion_filter.",
+        ]
+        physical.numbers = recipe.numbers.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
+        physical.flags = recipe.flags.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
+        physical.choices = recipe.choices.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
+        physical.numbers["camera.film_format_mm"] = recipe.number("camera.film_format_mm")
+        physical.monochromeGrain = false
+        physical.tone = recipe.tone.rawStage
+        physical.source = recipe.source
+        physical.temperature = recipe.temperature
+        // Scatter is an energy mixture in RGB. Extrapolating it creates negative edge light.
+        physical.numbers["film_render.halation.scatter_amount"] = min(
+            max(physical.number("film_render.halation.scatter_amount"), 0), 1)
+        let size = CGSize(width: input.width, height: input.height)
+        let opticalFlags = [
+            "film_render.halation.active", "camera.diffusion_filter.active",
+            "enlarger.diffusion_filter.active",
+        ]
+        var optics = physical
+        optics.numbers = optics.numbers.filter { !$0.key.hasPrefix("film_render.grain.") }
+        optics.flags = optics.flags.filter { !$0.key.hasPrefix("film_render.grain.") }
+        optics.flags["film_render.grain.active"] = false
+        let source: CGImage
+        if preview, opticsKey == optics, opticsSize == size, let image = opticsImage {
+            source = image
+        } else {
+            if opticalFlags.contains(where: { optics.flag($0) }) || !optics.tone.rawStage.isIdentity {
+                source = try await gpu.processOptics(
+                    input.pixels, width: input.width, height: input.height,
+                    pipeline: FilmPipeline(library: library, recipe: optics))
+            } else {
+                source = try SourceImageRenderer.workingImage(input)
+            }
+            if preview {
+                opticsKey = optics
+                opticsSize = size
+                opticsImage = source
+            }
+        }
+        var grain = physical
+        grain.numbers = grain.numbers.filter {
+            $0.key.hasPrefix("film_render.grain.") || $0.key == "camera.film_format_mm"
+        }
+        grain.flags = grain.flags.filter { $0.key.hasPrefix("film_render.grain.") }
+        grain.choices = [:]
+        for flag in opticalFlags { grain.flags[flag] = false }
+        grain.flags["print_render.glare.active"] = false
+        let noise: (CGImage, CGImage)?
+        if !grain.flag("film_render.grain.active") {
+            noise = nil
+            if preview {
+                grainImages = nil
+                grainKey = nil
+            }
+        } else if preview, grainKey == grain, grainSize == size, let frames = grainImages {
+            noise = frames
+        } else {
+            let exposure = try exposure(grain, library: library)
+            let pipeline = try FilmPipeline(library: library, recipe: grain)
+            let noisy = try await gpu.processImage(
+                input.pixels, width: input.width, height: input.height,
+                pipeline: pipeline, autoExposureEV: exposure)
+            let mean = try await gpu.processImage(
+                input.pixels, width: input.width, height: input.height,
+                pipeline: pipeline, autoExposureEV: exposure, grainMean: true)
+            noise = (noisy, mean)
+            if preview {
+                grainKey = grain
+                grainSize = size
+                grainImages = noise
+            }
+        }
+        return (source, noise?.0, noise?.1)
+    }
+
+    private func frame(
+        _ input: SourceImageRenderer.Input, recipe: EditRecipe,
+        library: ModelLibrary, gpu: MetalFilmPipeline, preview: Bool
+    ) async throws -> CGImage {
+        if recipe.look.mode == .lut {
+            let frames = try await effectFrames(
+                input, recipe: recipe, library: library, gpu: gpu, preview: preview)
+            let residual: (CGImage, CGImage)? = frames.1.flatMap { dirty in frames.2.map { (dirty, $0) } }
+            return try ToneRenderer.render(
+                frames.0, tone: recipe.tone.outputStage, luts: applications(recipe), residual: residual,
+                monochromeResidual: recipe.monochromeGrain)
+        }
         var key = recipe.processingRecipe
         key.mix = 1
-        key.tone = EditRecipe.Tone()
+        key.tone = recipe.tone.rawStage
+        key.look = EditRecipe.Look()
         let film: CGImage
-        if filmRecipe == key, let cached = filmImage {
+        if preview, filmRecipe == key, let cached = filmImage {
             film = cached
         } else {
-            let pipeline = try FilmPipeline(library: library, recipe: recipe)
             film = try await gpu.processImage(
                 input.pixels, width: input.width, height: input.height,
-                pipeline: pipeline, autoExposureEV: exposure(recipe, library: library))
-            filmRecipe = key
-            filmImage = film
+                pipeline: FilmPipeline(library: library, recipe: recipe),
+                autoExposureEV: exposure(recipe, library: library))
+            if preview {
+                filmRecipe = key
+                filmImage = film
+            }
         }
         try Task.checkCancellation()
-        let mixed = try SourceImageRenderer.blend(film: film, source: input, amount: recipe.mix)
-        return try ToneRenderer.render(mixed, tone: recipe.tone)
+        let mixed: CGImage
+        if recipe.mix >= 1 {
+            mixed = film
+        } else {
+            let rawSource = try ToneRenderer.working(
+                SourceImageRenderer.workingImage(input), tone: recipe.tone.rawStage)
+            mixed = try SourceImageRenderer.blend(film: film, sourceImage: rawSource, amount: recipe.mix)
+        }
+        return try ToneRenderer.render(mixed, tone: recipe.tone.outputStage)
     }
 
     func export(_ recipe: EditRecipe, size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double)
@@ -138,21 +270,16 @@ actor PhotoRenderer {
             let decoded = try PhotoExporter.decodeSource(data, maximum: maximum)
             let input = try SourceImageRenderer.prepare(
                 data: data, fallback: decoded, recipe: recipe, maximum: maximum)
-            let (library, gpu) = try resources()
-            let pipeline = try FilmPipeline(library: library, recipe: recipe)
-            let film: CGImage
+            let (library, gpu) = try await renderResources.load()
+            let graded: CGImage
             do {
-                film = try await gpu.processImage(
-                    input.pixels, width: input.width, height: input.height,
-                    pipeline: pipeline, autoExposureEV: exposure(recipe, library: library))
+                graded = try await frame(input, recipe: recipe, library: library, gpu: gpu, preview: false)
             } catch {
                 await gpu.releaseWorkingCaches()
                 throw error
             }
             await gpu.releaseWorkingCaches()
             try Task.checkCancellation()
-            let mixed = try SourceImageRenderer.blend(film: film, source: input, amount: recipe.mix)
-            let graded = try ToneRenderer.render(mixed, tone: recipe.tone)
             guard let transformed = GeometryRenderer.render(graded, geometry: recipe.geometry),
                 let cropped = transformed.cropping(
                     to: recipe.crop.pixelRect(

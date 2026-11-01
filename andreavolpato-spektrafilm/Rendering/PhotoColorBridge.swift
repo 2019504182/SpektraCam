@@ -32,6 +32,20 @@ nonisolated enum PhotoColorBridge {
         return pixels
     }
 
+    /// Preserve extended-range film output until all creative grading has finished.
+    static func workingImage(_ data: Data, width: Int, height: Int, encoded: Bool = true) throws -> CGImage {
+        guard data.count == width * height * 16 else { throw Failure.invalidImage }
+        let input = CIImage(
+            bitmapData: data, bytesPerRow: width * 16,
+            size: CGSize(width: width, height: height), format: .RGBAf,
+            colorSpace: encoded ? CGColorSpace(name: CGColorSpace.extendedSRGB)! : linear)
+        guard
+            let image = context.createCGImage(
+                input, from: input.extent, format: .RGBAf,
+                colorSpace: linear, deferred: false)
+        else { throw Failure.bitmap }
+        return image
+    }
     static func encode(_ encoded: [SIMD4<Float>], width: Int, height: Int) throws -> CGImage {
         guard width > 0, height > 0, encoded.count == width * height else { throw Failure.invalidImage }
         let data = encoded.withUnsafeBytes { Data($0) }

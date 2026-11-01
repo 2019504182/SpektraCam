@@ -11,8 +11,8 @@ checks={
  'color-benchmark':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','MetalModelResources','MetalColorPipeline'],['.']),
  'color-pipeline':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline'],['.']),
  'metal-color':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','MetalModelResources','MetalColorPipeline'],['.']),
- 'spatial-pipeline':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','StatisticsCore','SpatialCore','HalationCore','GrainCore','DiffusionCore','ReferenceCorrectionCore','FilmPipeline'],['.']),
- 'metal-film':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','StatisticsCore','SpatialCore','HalationCore','GrainCore','DiffusionCore','ReferenceCorrectionCore','FilmPipeline','MetalModelResources','MetalSpatial','MetalDiffusion','PhotoColorBridge','MetalFilmPipeline'],['.']),
+ 'spatial-pipeline':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','StatisticsCore','SpatialCore','HalationCore','GrainCore','DiffusionCore','ReferenceCorrectionCore','RawAdjustments','FilmPipeline'],['.']),
+ 'metal-film':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','StatisticsCore','SpatialCore','HalationCore','GrainCore','DiffusionCore','ReferenceCorrectionCore','RawAdjustments','FilmPipeline','MetalModelResources','MetalSpatial','MetalDiffusion','PhotoColorBridge','MetalFilmPipeline'],['.']),
  'spatial':(['SpectralCore','SpatialCore'],['Reference/Fixtures/spatial-stages.json']),
  'metal-spatial':(['SpectralCore','SpatialCore','MetalSpatial'],['.']),
  'metal-diffusion':(['SpectralCore','SpatialCore','DiffusionCore','MetalDiffusion'],['.']),
@@ -37,12 +37,14 @@ checks={
 }
 checks['histogram'] = (['PhotoHistogram'], [])
 checks['raw-input'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRenderer','PhotoMetadata','ImportedPhoto'], [])
-checks['tone'] = (checks['recipe'][0] + ['ToneRenderer','PhotoColorBridge'], [])
+checks['tone'] = (checks['recipe'][0] + ['ToneRenderer','RawAdjustments','PhotoColorBridge','CubeLUT'], [])
+checks['lut'] = (checks['tone'][0] + ['LUTLibrary'], [])
 checks['source'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRenderer'], [])
 checks['exposure'] = (checks['color-pipeline'][0], ['.'])
-checks['preview'] = (checks['metal-film'][0] + ['SourceImageRenderer','ToneRenderer','PhotoExporter','GeometryRenderer','RenderMemoryBudget','PhotoRenderer'], ['.'])
+checks['preview'] = (checks['metal-film'][0] + ['SourceImageRenderer','ToneRenderer','CubeLUT','PhotoExporter','GeometryRenderer','RenderMemoryBudget','FilmRenderResources','PhotoRenderer'], ['.'])
 checks['processed-export'] = (checks['preview'][0] + ['PhotoMetadata','ImportedPhoto'], ['.'])
-checks['library'] = (checks['processed-export'][0] + ['LibraryPhoto','LibraryFiles','LibraryImages','PhotoLibrary'], ['.'])
+checks['raw-order'] = (checks['preview'][0], ['.'])
+checks['library'] = (checks['processed-export'][0] + ['LibraryPhoto','LibraryFiles','LibraryImages','PhotoLibrary','LUTLibrary'], ['.'])
 checks['monochrome-grain'] = (checks['metal-film'][0], ['.'])
 checks['film-noise'] = (checks['metal-film'][0], ['.'])
 checks['film-benchmark'] = (checks['metal-film'][0], ['.'])
@@ -55,6 +57,7 @@ if args.simulator:
  simctl = str(xcode/'usr/bin/simctl')
  devices = json.loads(subprocess.check_output([simctl,'list','devices','available','--json'],env=env,text=True))
  booted = [d['udid'] for group in devices['devices'].values() for d in group if d['state']=='Booted']
+ if env.get('SPEKTRACAM_SIMULATOR_ID'): booted=[d for d in booted if d==env['SPEKTRACAM_SIMULATOR_ID']]
  if not booted: raise SystemExit('Boot a Simulator before using --simulator.')
  simulator = [simctl,'spawn',booted[0]]
  compiler += ['-target',platform.machine()+'-apple-ios27.2-simulator']
@@ -62,4 +65,4 @@ for name in args.checks or [key for key in checks if not key.startswith('metal-'
  files,arguments=checks[name];binary=out/(name+'-checks'+('-simulator' if args.simulator else ''))
  subprocess.run(compiler+(['-O'] if name.endswith('-benchmark') and not args.debug_benchmarks else [])+[str(sources[f]) for f in files]+[str(root/'Scripts'/(name+'-checks.swift')),'-o',str(binary)],env=env,check=True)
  env['SPEKTRAFILM_BENCHMARK_CONFIGURATION']='debug' if args.debug_benchmarks else 'optimized'
- subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export','library'] else []),env=env,check=True)
+ subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export','library','lut','preview'] else []),env=env,check=True)

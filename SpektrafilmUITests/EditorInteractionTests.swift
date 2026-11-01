@@ -2,6 +2,80 @@ import XCTest
 
 /// Native gestures catch integration faults that pixel/reference checks cannot observe.
 final class EditorInteractionTests: XCTestCase {
+    @MainActor func testLUTManagerPresentation() throws {
+        let app = importPhoto()
+        let manager = app.buttons["library.luts"]
+        XCTAssertTrue(manager.waitForExistence(timeout: 5))
+        XCTAssertLessThan(app.staticTexts["library.count"].frame.maxY, manager.frame.minY)
+        manager.tap()
+        XCTAssertTrue(app.buttons["lut.import"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["lut.delete"].isEnabled)
+        XCTAssertFalse(app.buttons["lut.none"].exists, "Manager must not edit a photo's LUT assignment")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Shared LUT Manager"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["lut.library.close"].tap()
+        XCTAssertTrue(manager.waitForExistence(timeout: 5))
+    }
+    @MainActor func testCameraPresentationKeepsEditor() throws {
+        let app = importPhoto()
+        app.buttons["camera.open"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["camera.unavailable"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["camera.shutter"].isEnabled)
+        app.buttons["camera.library"].tap()
+        XCTAssertTrue(app.buttons["camera.library.close"].waitForExistence(timeout: 5))
+        app.buttons["camera.library.close"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["camera.unavailable"].waitForExistence(timeout: 10))
+        app.buttons["camera.close"].tap()
+        XCTAssertTrue(app.buttons["library.import"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'library.photo.'")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 10))
+        app.buttons["camera.open"].tap()
+        XCTAssertTrue(app.buttons["camera.close"].waitForExistence(timeout: 5))
+        app.buttons["camera.close"].tap()
+        app.buttons["photo.develop"].tap()
+        XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 30))
+        app.buttons["camera.open"].tap()
+        XCTAssertTrue(app.buttons["camera.close"].waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Simulator camera unavailable"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["camera.close"].tap()
+        XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["editor.expand"].value as? String, "Expanded")
+    }
+    @MainActor func testRevertSelectedPhoto() throws {
+        let app = openPhoto()
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 30))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["library.select"].waitForExistence(timeout: 5))
+        app.buttons["library.select"].tap()
+        XCTAssertTrue(app.buttons["library.revert"].waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["library.import"])
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(app.buttons["library.revert"].isEnabled)
+        libraryPhotos(app).firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.revert"].isEnabled)
+        app.buttons["library.revert"].tap()
+        XCTAssertTrue(app.buttons["Revert to Original"].waitForExistence(timeout: 5))
+        if app.buttons["Cancel"].exists {
+            app.buttons["Cancel"].tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["photo.badge.edited"].exists)
+        app.buttons["library.revert"].tap()
+        app.buttons["Revert to Original"].tap()
+        let original = NSPredicate(format: "value == %@", "Original")
+        expectation(for: original, evaluatedWith: libraryPhotos(app).firstMatch)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.descendants(matching: .any)["photo.badge.edited"].exists)
+        app.buttons["library.select"].tap()
+        XCTAssertTrue(app.buttons["library.import"].exists)
+    }
     @MainActor func testNativeZoomAndGuardedExit() throws {
         let app = openPhoto()
         app.buttons["editor.tool.develop"].tap()
@@ -120,10 +194,10 @@ final class EditorInteractionTests: XCTestCase {
     @MainActor func testLibraryRestartEditAndDelete() {
         let app = openPhoto()
         app.buttons["editor.tool.adjust"].tap()
-        let slider = app.sliders["source.exposure"]
+        let slider = app.sliders["tone.exposure"]
         XCTAssertTrue(slider.waitForExistence(timeout: 5))
-        drag(slider, to: 0.6)
-        let savedValue = app.buttons["source.exposure.value"].value as? String
+        drag(slider, to: 0.75)
+        let savedValue = app.buttons["tone.exposure.value"].value as? String
         XCTAssertNotEqual(savedValue, "0 EV")
         // A recipe also survives termination without using the editor's Save action.
         Thread.sleep(forTimeInterval: 0.5)
@@ -135,7 +209,7 @@ final class EditorInteractionTests: XCTestCase {
         app.buttons["photo.develop"].tap()
         XCTAssertTrue(app.buttons["editor.tool.adjust"].waitForExistence(timeout: 30))
         app.buttons["editor.tool.adjust"].tap()
-        XCTAssertEqual(app.buttons["source.exposure.value"].value as? String, savedValue)
+        XCTAssertEqual(app.buttons["tone.exposure.value"].value as? String, savedValue)
         app.buttons["editor.back"].tap()
         XCTAssertTrue(app.buttons["photo.delete"].waitForExistence(timeout: 30))
         app.buttons["photo.delete"].tap()
@@ -221,9 +295,19 @@ final class EditorInteractionTests: XCTestCase {
             + [app.buttons["editor.export"]]
         for button in toolbar {
             XCTAssertGreaterThanOrEqual(button.frame.width, 44, "Tool touch area is too narrow")
-            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
             XCTAssertEqual(button.frame.minY, toolbar[0].frame.minY, accuracy: 1)
         }
+        // Native toolbar segments expose their 36 pt visual frame inside a 48 pt glass surface.
+        // Check the required 44 pt touch height with physical taps outside that visual frame.
+        for name in ["crop", "develop", "adjust", "effects"] {
+            let button = app.buttons["editor.tool." + name]
+            let center = button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            center.withOffset(CGVector(dx: 0, dy: -21)).tap()
+            XCTAssertTrue(button.isSelected, "The native tool did not accept its upper touch edge")
+            center.withOffset(CGVector(dx: 0, dy: 21)).tap()
+            XCTAssertFalse(button.isSelected, "The native tool did not accept its lower touch edge")
+        }
+        app.buttons["editor.tool.develop"].tap()
         let before = image.frame
         XCTAssertGreaterThanOrEqual(before.minY, info.frame.maxY + 6)
         XCTAssertLessThanOrEqual(before.maxY, app.buttons["editor.tool.develop"].frame.minY + 1)
@@ -260,12 +344,12 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(compare.frame.minY, app.buttons["editor.info"].frame.maxY)
         XCTAssertTrue(app.buttons["Camera"].exists)
         app.buttons["editor.tool.adjust"].tap()
-        drag(app.sliders["source.exposure"], to: 0.7)
-        XCTAssertNotEqual(app.buttons["source.exposure.value"].value as? String, "0 EV")
+        drag(app.sliders["tone.exposure"], to: 0.7)
+        XCTAssertNotEqual(app.buttons["tone.exposure.value"].value as? String, "0 EV")
         app.buttons["editor.history"].tap()
         app.buttons["Undo"].tap()
         XCTAssertEqual(
-            app.buttons["source.exposure.value"].value as? String, "0 EV", "A drag must undo in one step")
+            app.buttons["tone.exposure.value"].value as? String, "0 EV", "A drag must undo in one step")
         let contrast = app.sliders["tone.contrast"]
         XCTAssertTrue(contrast.waitForExistence(timeout: 5))
         drag(contrast, to: 0.8)
@@ -313,17 +397,18 @@ final class EditorInteractionTests: XCTestCase {
     @MainActor func testSourceResetAndDiffusionControls() {
         let app = openPhoto()
         app.buttons["editor.tool.adjust"].tap()
-        let exposure = app.sliders["source.exposure"]
+        let exposure = app.sliders["tone.exposure"]
         XCTAssertTrue(exposure.waitForExistence(timeout: 5))
         drag(exposure, to: 0.6)
-        let entered = app.buttons["source.exposure.value"]
+        let entered = app.buttons["tone.exposure.value"]
         XCTAssertNotEqual(entered.value as? String, "0 EV")
         app.buttons["editor.history"].tap()
         app.buttons["Reset All Edits"].tap()
         let reset = app.alerts["Reset all edits?"]
         XCTAssertTrue(reset.waitForExistence(timeout: 5))
         reset.buttons["Reset All Edits"].tap()
-        XCTAssertEqual(entered.value as? String, "0 EV")
+        expectation(for: NSPredicate(format: "value == %@", "0 EV"), evaluatedWith: entered)
+        waitForExpectations(timeout: 10)
         app.buttons["editor.tool.effects"].tap()
         let area = app.sliders["film_render.grain.particle_area_um2"]
         let areaValue = app.buttons["film_render.grain.particle_area_um2.value"]
@@ -337,8 +422,9 @@ final class EditorInteractionTests: XCTestCase {
             let toggle = app.descendants(matching: .any).matching(identifier: key).firstMatch
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
             for _ in 0..<8 {
-                let top = app.buttons["editor.expand"].frame.maxY + 24
-                let bottom = app.buttons["editor.tool.effects"].frame.minY - 24
+                let controls = app.scrollViews["editor.controls"].frame
+                let top = controls.minY + 12
+                let bottom = controls.maxY - 12
                 if toggle.isHittable && toggle.frame.minY >= top && toggle.frame.maxY <= bottom { break }
                 let upwards = toggle.frame.midY > (top + bottom) / 2
                 let origin = app.coordinate(withNormalizedOffset: .zero)

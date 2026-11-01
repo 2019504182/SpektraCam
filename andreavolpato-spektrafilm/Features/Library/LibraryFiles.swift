@@ -68,20 +68,25 @@ actor LibraryFiles {
             }
         }
     }
+    func pendingCaptures() throws -> [URL] { try CameraInbox(root: root).pending() }
+    func removeCapture(_ url: URL) throws { try CameraInbox(root: root).remove(url) }
     nonisolated func sourceURL(_ photo: LibraryPhoto) -> URL {
         root.appendingPathComponent("Originals").appendingPathComponent(photo.id.uuidString)
             .appendingPathComponent("original." + photo.fileExtension)
     }
     private func cacheURL(_ photo: LibraryPhoto, thumbnail: Bool) -> URL {
-        cache.appendingPathComponent(photo.id.uuidString)
-            .appendingPathComponent(photo.renderKey + (thumbnail ? "-thumb.jpg" : "-preview.jpg"))
+        // Render changes must rebuild saved previews even when the edit recipe is unchanged.
+        let revision = photo.hasEdits ? "v4-" : ""
+        return cache.appendingPathComponent(photo.id.uuidString)
+            .appendingPathComponent(revision + photo.renderKey + (thumbnail ? "-thumb.jpg" : "-preview.jpg"))
     }
     func importPhoto(from url: URL, now: Date = Date()) throws -> LibraryPhoto {
         try Task.checkCancellation()
         guard
             let source = CGImageSourceCreateWithURL(
                 url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-            let type = CGImageSourceGetType(source), let thumbnail = Self.thumbnail(source, maximum: 384)
+            let type = CGImageSourceGetType(source),
+            let thumbnail = Self.thumbnail(source, maximum: ImportedPhoto.thumbnailMaximumPixelSize)
         else { throw Failure.image }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let metadata = PhotoMetadata(properties: properties, type: type, image: thumbnail)
@@ -118,20 +123,47 @@ actor LibraryFiles {
         guard
             let source = CGImageSourceCreateWithURL(
                 sourceURL(photo) as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-            let image = Self.thumbnail(source, maximum: thumbnail ? 384 : 1080)
+            let image = Self.thumbnail(
+                source,
+                maximum: thumbnail
+                    ? ImportedPhoto.thumbnailMaximumPixelSize : ImportedPhoto.previewMaximumPixelSize)
         else { throw Failure.image }
         try? Self.writeJPEG(image, to: cacheURL(photo, thumbnail: thumbnail))
         return image
     }
-    func decodedPhoto(_ photo: LibraryPhoto) throws -> ImportedPhoto {
+    func decodedPhoto(_ photo: LibraryPhoto, maximum: Int = 1080) throws -> ImportedPhoto {
         let data = try Data(contentsOf: sourceURL(photo))
-        guard let result = ImportedPhoto.decode(data) else { throw Failure.image }
+        guard let result = ImportedPhoto.decode(data, maximum: maximum) else { throw Failure.image }
         return result
+    }
+    /// A grid rebuild must never replace the independent 1080 px photo preview.
+    @discardableResult func storeThumbnail(_ image: CGImage, photo: LibraryPhoto) throws -> CGImage {
+        let scale = min(
+            1, Double(ImportedPhoto.thumbnailMaximumPixelSize) / Double(max(image.width, image.height)))
+        let small: CGImage
+        if scale == 1 {
+            small = image
+        } else {
+            let width = max(1, Int(Double(image.width) * scale))
+            let height = max(1, Int(Double(image.height) * scale))
+            guard
+                let context = CGContext(
+                    data: nil, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: 0, space: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { throw Failure.image }
+            context.interpolationQuality = .high
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let result = context.makeImage() else { throw Failure.image }
+            small = result
+        }
+        try Self.writeJPEG(small, to: cacheURL(photo, thumbnail: true))
+        return small
     }
     func storePreview(_ image: CGImage, photo: LibraryPhoto) throws {
         try Self.writeJPEG(image, to: cacheURL(photo, thumbnail: false))
         guard let source = CGImageSourceCreateWithURL(cacheURL(photo, thumbnail: false) as CFURL, nil),
-            let small = Self.thumbnail(source, maximum: 384)
+            let small = Self.thumbnail(source, maximum: ImportedPhoto.thumbnailMaximumPixelSize)
         else { throw Failure.image }
         try Self.writeJPEG(small, to: cacheURL(photo, thumbnail: true))
         // Retain one cached recipe per photo. The original can rebuild older frames.
@@ -198,5 +230,32 @@ actor LibraryFiles {
             out, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
         guard CGImageDestinationFinalize(out) else { throw Failure.image }
         try (data as Data).write(to: url, options: .atomic)
+    }
+}
+
+/// Captures stay in Application Support until their library index commit succeeds.
+nonisolated struct CameraInbox: Sendable {
+    let directory: URL
+    init(root: URL) { directory = root.appendingPathComponent("CameraInbox", isDirectory: true) }
+    func store(_ data: Data) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("dng")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+    func pending() throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )
+        .filter { $0.pathExtension.lowercased() == "dng" }.sorted {
+            $0.lastPathComponent < $1.lastPathComponent
+        }
+    }
+    func remove(_ url: URL) throws {
+        guard url.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else {
+            throw LibraryFiles.Failure.missing
+        }
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 }

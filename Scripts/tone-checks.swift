@@ -66,8 +66,25 @@ import Foundation
         tone.monochrome = true
         let gray = try PhotoColorBridge.decode(ToneRenderer.render(color, tone: tone))[0]
         precondition(abs(gray.x - gray.y) < 0.0001 && abs(gray.y - gray.z) < 0.0001)
+        // The overexposed display may be white, while the working image must keep distinct values.
+        let hdrSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        let hdrPixels: [SIMD4<Float>] = [.init(0.2, 0.2, 0.2, 1), .init(0.4, 0.4, 0.4, 1)]
+        let hdrData = hdrPixels.withUnsafeBytes { Data($0) }
+        let hdrInput = CIImage(bitmapData: hdrData, bytesPerRow: 32, size: CGSize(width: 2, height: 1), format: .RGBAf, colorSpace: hdrSpace)
+        let hdrContext = CIContext(options: [.workingColorSpace: hdrSpace, .workingFormat: CIFormat.RGBAf])
+        let hdrImage = hdrContext.createCGImage(hdrInput, from: hdrInput.extent, format: .RGBAf, colorSpace: hdrSpace)!
+        tone = EditRecipe.Tone(); tone.exposureEV = 4
+        let over = try PhotoColorBridge.decode(ToneRenderer.working(hdrImage, tone: tone))
+        precondition(over[0].x > 3 && over[1].x > 6 && over[1].x > over[0].x, "Exposure clipped the working image")
+        tone.highlights = -2
+        let recovered = try PhotoColorBridge.decode(ToneRenderer.render(hdrImage, tone: tone))
+        precondition(recovered[1].x < 1 && recovered[1].x - recovered[0].x > 0.05, "Highlights cannot recover distinct bright values")
+        tone = EditRecipe.Tone(); tone.exposureEV = -3; tone.shadows = 1
+        let low = try PhotoColorBridge.decode(ToneRenderer.working(hdrImage, tone: tone))
+        precondition(low[0].x > 0 && low[1].x > low[0].x)
+        print("PASS: float exposure headroom, highlight recovery, shadow detail and final SDR conversion")
         let legacy = try JSONDecoder().decode(EditRecipe.self, from: Data("{\"version\":1}".utf8))
-        precondition(legacy.version == 2 && legacy.tone.isIdentity && !legacy.monochromeGrain)
+        precondition(legacy.version == 3 && legacy.tone.isIdentity && !legacy.monochromeGrain)
         var recipe = EditRecipe()
         recipe.tone.contrast = 1.3
         recipe.monochromeGrain = true

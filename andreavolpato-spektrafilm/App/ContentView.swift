@@ -6,11 +6,16 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var library: PhotoLibrary?
     @State private var failure: String?
+    @State private var showCamera = false
+    @State private var captureImportFailure: String?
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Group {
             if let library {
                 LibraryView(library: library)
+                    .environment(\.openCamera, { showCamera = true })
+                    .fullScreenCover(isPresented: $showCamera) { CameraView(library: library) }
+                    .task { await recoverCaptures(library); try? await library.luts.load() }
             } else if let failure {
                 ContentUnavailableView {
                     Label("Couldn’t open library", systemImage: "exclamationmark.triangle")
@@ -30,6 +35,18 @@ struct ContentView: View {
             }
         }
         .alert(
+            "Couldn’t import capture",
+            isPresented: Binding(
+                get: { captureImportFailure != nil },
+                set: { if !$0 { captureImportFailure = nil } }
+            )
+        ) {
+            Button("Retry") { if let library { Task { await recoverCaptures(library) } } }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("The capture is kept on this iPhone. " + (captureImportFailure ?? ""))
+        }
+        .alert(
             "Couldn’t save edits",
             isPresented: Binding(
                 get: { library?.saveFailure != nil },
@@ -43,6 +60,12 @@ struct ContentView: View {
         } message: {
             Text(library?.saveFailure ?? "")
         }
+    }
+    private func recoverCaptures(_ library: PhotoLibrary) async {
+        do {
+            try await library.recoverCaptures()
+            captureImportFailure = nil
+        } catch { captureImportFailure = error.localizedDescription }
     }
     private func openLibrary() {
         do {

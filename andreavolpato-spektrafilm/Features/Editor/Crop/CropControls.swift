@@ -79,7 +79,7 @@ struct CropControls: View {
                     }
                 }.font(.subheadline)
                 DefaultSlider(value: $geometry.straightenDegrees, range: -45...45, step: 0.1,
-                    title: "Straighten", identifier: "crop.straighten", onEditingChanged: onStraightenEditingChanged)
+                    title: "Straighten", identifier: "crop.straighten", snapsToDefault: false, onEditingChanged: onStraightenEditingChanged)
                 .accessibilityLabel("Straighten")
                 .accessibilityValue(
                     geometry.straightenDegrees.formatted(.number.precision(.fractionLength(1)))

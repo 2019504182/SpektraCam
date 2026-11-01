@@ -5,6 +5,7 @@ import UIKit
 struct EditorView: View {
     let session: EditorSession
     var locationName: String? = nil
+    let library: PhotoLibrary
     let onFinish: () async throws -> Void
     @State private var closing = false
     @State private var closeFailure: String?
@@ -39,17 +40,17 @@ struct EditorView: View {
                 }
             }
             if activeTool == .crop { toolPanel }
-            EditorToolbar(activeTool: $activeTool) {
-                setExpanded(false)
-                showExport = true
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+
         }
         .background(EditorNavigationGuard().allowsHitTesting(false))
         .navigationTitle(activeTool?.title ?? "Editor")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
+            EditorToolbar(activeTool: $activeTool) {
+                setExpanded(false)
+                showExport = true
+            }
             ToolbarItem(placement: .topBarLeading) {
                 Button("Close Editor", systemImage: "xmark", action: finish)
                     .labelStyle(.iconOnly)
@@ -155,7 +156,7 @@ struct EditorView: View {
                 PhotoViewport(
                     image: showOriginal ? UIImage(cgImage: session.photo.preview) : session.displayImage,
                     onTap: { point in
-                        if panelExpanded && !inspectorFrame.contains(point) { setExpanded(false) }
+                        if panelExpanded && point.y < inspectorFrame.minY - 44 { setExpanded(false) }
                     }
                 )
                 .overlay(alignment: .top) {
@@ -224,8 +225,11 @@ struct EditorView: View {
                     }
                 }, onStraightenEditingChanged: { session.setInteraction(key: "straighten", active: $0) })
         } else if activeTool == .develop {
-            DevelopPanel(session: session)
-                .padding(.horizontal).padding(.vertical, 12)
+            if session.recipe.look.mode == .spektrafilm {
+                DevelopPanel(session: session).padding(.horizontal).padding(.vertical, 12)
+            } else {
+                LUTPanel(session: session, library: library)
+            }
 
         } else if let activeTool {
             ScrollView {
@@ -247,16 +251,17 @@ struct EditorView: View {
         max(120, height - PhotoInfoPanel.collapsedHeight - 12 - 56 - 52 - 8)
     }
 
+    // Collapsed content heights, in points. The category buttons sit above this area.
     private var collapsedPanelHeight: CGFloat {
-        if activeTool == .develop { return 270 }
+        if activeTool == .develop { return 250 }
         if activeTool == .adjust {
             switch adjustSection {
-            case .exposure: return 260
-            case .liftGain: return 160
-            case .color: return 280
+            case .exposure: return 180
+            case .liftGain: return 140
+            case .color: return 180
             }
         }
-        return 280
+        return 180
     }
 
     private func setExpanded(_ expanded: Bool) {
@@ -266,7 +271,14 @@ struct EditorView: View {
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    if activeTool == .adjust {
+                    if activeTool == .develop {
+                        PanelTabs(
+                            options: EditRecipe.LookMode.allCases.map { ($0, $0.title) },
+                            selection: Binding(
+                                get: { session.recipe.look.mode },
+                                set: { mode in session.update(key: "look.mode") { $0.look.mode = mode } }),
+                            prefix: "develop.mode.")
+                    } else if activeTool == .adjust {
                         PanelTabs(
                             options: AdjustPanel.Section.allCases.map { ($0, $0.title) },
                             selection: $adjustSection, prefix: "adjust.section.")
@@ -289,7 +301,8 @@ struct EditorView: View {
                     .accessibilityValue(panelExpanded ? "Expanded" : "Collapsed")
                 }
                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                toolPanel.frame(height: height).glassEffect(in: .rect(cornerRadius: 24))
+                toolPanel.font(.footnote).frame(height: height).glassEffect(
+                    .regular, in: .rect(cornerRadius: 24))
             }
         }
     }
@@ -363,7 +376,8 @@ private struct PanelTabs<Selection: Hashable & RawRepresentable>: View where Sel
                     .accessibilityAddTraits(selection == option.0 ? .isSelected : [])
                 }
             }.padding(.vertical, 4)
-        }.scrollIndicators(.hidden).frame(height: 44).clipped()
+        }.scrollIndicators(.hidden).frame(height: 44)
+            .dynamicTypeSize(...DynamicTypeSize.large)
     }
     private func tab(_ option: (Selection, String)) -> some View {
         Button(option.1) { selection = option.0 }

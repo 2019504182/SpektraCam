@@ -43,12 +43,11 @@ struct PhotoInfoPanel: View {
                     channels.toggle()
                     onInteraction?()
                 } label: {
-                    HistogramChart(histogram: histogram, channels: channels)
-                        .frame(width: 96, height: 36)
-                        .overlay(alignment: .topTrailing) {
-                            Text(channels ? "RGB" : "Luma").font(.system(size: 8)).padding(2)
-                        }
-                        .padding(.vertical, 4).contentShape(.rect)
+                    VStack(spacing: 3) {
+                        HistogramChart(histogram: histogram, channels: channels).frame(width: 96, height: 28)
+                        Text(channels ? "RGB" : "Luma").font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }.frame(width: 96, height: 44).contentShape(.rect)
                 }
                 .buttonStyle(.plain).padding(.trailing, 12)
                 .accessibilityLabel(channels ? "RGB histogram" : "Brightness histogram")

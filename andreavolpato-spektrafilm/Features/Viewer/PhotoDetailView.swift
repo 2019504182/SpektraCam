@@ -84,7 +84,7 @@ struct PhotoDetailView: View {
             retry = 0
         }
         .navigationDestination(item: $editor) { session in
-            EditorView(session: session, locationName: photo?.locationName) {
+            EditorView(session: session, locationName: photo?.locationName, library: library) {
                 let recipe = session.recipe
                 let preview = await session.currentPreview()
                 try await library.finishEditing(selectedID, recipe: recipe, preview: preview)
@@ -108,11 +108,16 @@ struct PhotoDetailView: View {
     }
     private var filmTitle: String {
         guard let recipe = savedRecipe else { return "Original" }
+        if recipe.look.mode == .lut { return "3D LUT" }
         return FilmStock.films.first { $0.id == recipe.filmID }?.name ?? "Film"
     }
     private var printTitle: String {
         guard let recipe = savedRecipe else {
             return photo?.isRAW == true ? "RAW" : photo?.metadata.format ?? "Photo"
+        }
+        if recipe.look.mode == .lut {
+            let names = [recipe.look.first.id, recipe.look.second.id].compactMap { library.luts.name($0) }
+            return names.isEmpty ? "No LUT selected" : names.joined(separator: " · ")
         }
         return recipe.bypassesPrint
             ? "Direct scan" : FilmStock.prints.first { $0.id == recipe.printID }?.name ?? "Print"
@@ -164,7 +169,7 @@ struct PhotoDetailView: View {
                 defer { working = false }
                 do {
                     let imported = try await library.files.decodedPhoto(photo)
-                    let session = EditorSession(photo: imported, recipe: recipe)
+                    let session = EditorSession(photo: imported, recipe: recipe, luts: library.luts)
                     if let image, photo.hasEdits { session.displayImage = image }
                     if exporting {
                         export = ExportRequest(session: session, originalURL: library.files.sourceURL(photo))

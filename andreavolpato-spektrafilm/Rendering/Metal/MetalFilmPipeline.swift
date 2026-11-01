@@ -21,10 +21,12 @@ actor MetalFilmPipeline {
         options.mathMode = .safe
         options.mathFloatingPointFunctions = .precise
         let library = try device.makeLibrary(
-            source: sources.joined(separator: "\n") + Self.monochromeKernel, options: options)
+            source: sources.joined(separator: "\n") + RawAdjustments.shader + RawAdjustments.bufferKernel
+                + Self.lutKernels + Self.monochromeKernel, options: options)
         var functions = [String: MTLComputePipelineState]()
         for name in [
-            "camera_exposure_image", "film_development_image", "coupler_development_image",
+            "finish_linear_image", "grain_layers_mean_image", "raw_adjust_image", "camera_exposure_image",
+            "film_development_image", "coupler_development_image",
             "paper_exposure_image", "paper_development_image", "scan_image_xyz", "compress_image_gamut",
             "encode_image_srgb", "mix_images", "image_maximum", "boost_image", "grain_layers_image",
             "random_lognormal_image", "finish_grain_image", "apply_glare_image", "encode_monochrome_grain",
@@ -62,21 +64,35 @@ actor MetalFilmPipeline {
 
     func processImage(
         _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline,
-        seed: UInt64 = 0, autoExposureEV: Double
+        seed: UInt64 = 0, autoExposureEV: Double, grainMean: Bool = false
     ) async throws -> CGImage {
         let frame = try await renderBuffer(
             input, width: width, height: height, pipeline: pipeline,
-            seed: seed, autoExposureEV: autoExposureEV)
+            seed: seed, autoExposureEV: autoExposureEV, grainMean: grainMean)
         let owned = frame.image
         let data = Data(
             bytesNoCopy: owned.contents(), count: width * height * 16,
             deallocator: .custom { [owned] _, _ in withExtendedLifetime(owned) {} })
-        return try PhotoColorBridge.encode(data, width: width, height: height)
+        return try PhotoColorBridge.workingImage(data, width: width, height: height)
+    }
+
+    /// Reuse the verified optical kernels in linear RGB, without the film/print color transform.
+    func processOptics(_ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline) async throws
+        -> CGImage
+    {
+        let frame = try await renderBuffer(
+            input, width: width, height: height, pipeline: pipeline,
+            autoExposureEV: 0, opticsOnly: true)
+        let owned = frame.image
+        let data = Data(
+            bytesNoCopy: owned.contents(), count: width * height * 16,
+            deallocator: .custom { [owned] _, _ in withExtendedLifetime(owned) {} })
+        return try PhotoColorBridge.workingImage(data, width: width, height: height, encoded: false)
     }
 
     private func renderBuffer(
         _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline, stochastic: Bool = true,
-        seed: UInt64 = 0, autoExposureEV: Double? = nil
+        seed: UInt64 = 0, autoExposureEV: Double? = nil, opticsOnly: Bool = false, grainMean: Bool = false
     ) async throws -> BufferFrame {
         let started = ProcessInfo.processInfo.systemUptime
         let count = width * height
@@ -190,9 +206,50 @@ actor MetalFilmPipeline {
             dispatch(e, "random_lognormal_image")
             return output
         }
-        var raw = try pool.take()
-        try node("camera_exposure_image", source, raw)
-        pool.release(source)
+        func finish(_ result: MTLBuffer, invalid: MTLBuffer) async throws -> BufferFrame {
+            try Task.checkCancellation()
+            let tail = command.rootCommandBuffer
+            submitted = true
+            do {
+                try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                    tail.addCompletedHandler { done in
+                        if let error = done.error {
+                            c.resume(throwing: error)
+                        } else if done.status != .completed {
+                            c.resume(throwing: Failure.command)
+                        } else {
+                            c.resume()
+                        }
+                    }
+                    command.commit()
+                }
+            } catch {
+                diffusion.clear()
+                throw error
+            }
+            try Task.checkCancellation()
+            guard invalid.contents().load(as: UInt32.self) == 0 else { throw Failure.nonfinite }
+            return BufferFrame(
+                image: result, wallSeconds: ProcessInfo.processInfo.systemUptime - started,
+                gpuSeconds: tail === originalCommand ? max(0, tail.gpuEndTime - tail.gpuStartTime) : nil)
+        }
+        // App RAW controls run before optical diffusion, emulsion exposure and development.
+        if !recipe.tone.rawStage.isIdentity {
+            let values = RawAdjustments.parameters(recipe.tone.rawStage)
+            let e = try encoder("raw_adjust_image", [source])
+            values.withUnsafeBytes { e.setBytes($0.baseAddress!, length: $0.count, index: 1) }
+            var n = UInt32(count)
+            e.setBytes(&n, length: 4, index: 2)
+            dispatch(e, "raw_adjust_image")
+        }
+        var raw: MTLBuffer
+        if opticsOnly {
+            raw = source
+        } else {
+            raw = try pool.take()
+            try node("camera_exposure_image", source, raw)
+            pool.release(source)
+        }
         let boost = recipe.number("film_render.halation.boost_ev")
         if boost > 0 {
             let maximum = try allocate(4)
@@ -264,6 +321,18 @@ actor MetalFilmPipeline {
                     divisor: halo.renormalize ? RGB(repeating: 1) + amount : RGB(repeating: 1))
                 pool.release(accumulated)
             }
+        }
+        if opticsOnly {
+            try diffuse(raw, "enlarger.diffusion_filter")
+            let invalid = try allocate(4)
+            guard let clear = command.makeBlitCommandEncoder() else { throw Failure.allocation }
+            clear.fill(buffer: invalid, range: 0..<4, value: 0)
+            clear.endEncoding()
+            let encoder = try encoder("finish_linear_image", [raw, invalid])
+            var n = UInt32(count)
+            encoder.setBytes(&n, length: 4, index: 2)
+            dispatch(encoder, "finish_linear_image")
+            return try await finish(raw, invalid: invalid)
         }
         let logRaw = try pool.take()
         let inhibition = try pool.take()
@@ -337,8 +406,9 @@ actor MetalFilmPipeline {
             }
             let configuration = try buffer((maxima + particles + minima + [grain.uniformity]).map(vector))
             let curves = try buffer(layerCurves)
+            let grainKernel = grainMean ? "grain_layers_mean_image" : "grain_layers_image"
             let e = try encoder(
-                "grain_layers_image",
+                grainKernel,
                 [density, layerImages[0], layerImages.last!, layerImages.last!, curves, configuration])
             if layerCount == 3 { e.setBuffer(layerImages[1], offset: 0, index: 2) }
             var s = SIMD4<UInt32>(
@@ -347,9 +417,11 @@ actor MetalFilmPipeline {
             var key = SIMD2<UInt32>(UInt32(truncatingIfNeeded: seed), UInt32(truncatingIfNeeded: seed >> 32))
             var offset = SIMD2<UInt32>.zero
             e.setBytes(&s, length: 16, index: 6)
-            e.setBytes(&key, length: 8, index: 7)
-            e.setBytes(&offset, length: 8, index: 8)
-            dispatch(e, "grain_layers_image")
+            if !grainMean {
+                e.setBytes(&key, length: 8, index: 7)
+                e.setBytes(&offset, length: 8, index: 8)
+            }
+            dispatch(e, grainKernel)
             if grain.sublayers && grain.dyeCloudBlur > 0 {
                 for i in 0..<3 {
                     let od = maxima[i] / particles[i]
@@ -361,7 +433,7 @@ actor MetalFilmPipeline {
             }
             var micro: MTLBuffer?
             let microSigma = grain.microstructure.y * 0.001 / pitch
-            if grain.sublayers && microSigma > 0.05 {
+            if grain.sublayers && microSigma > 0.05 && !grainMean {
                 var field = try randomField(
                     mean: 1, standardDeviation: microSigma, domain: 512, independent: true)
                 if grain.microstructure.x / pitch > 0.4 {
@@ -461,34 +533,42 @@ actor MetalFilmPipeline {
         } else {
             try node("encode_image_srgb", density, density, [invalid])
         }
-        try Task.checkCancellation()
-        let tail = command.rootCommandBuffer
-        submitted = true
-        do {
-            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-                tail.addCompletedHandler { done in
-                    if let error = done.error {
-                        c.resume(throwing: error)
-                    } else if done.status != .completed {
-                        c.resume(throwing: Failure.command)
-                    } else {
-                        c.resume()
-                    }
-                }
-                command.commit()
-            }
-        } catch {
-            diffusion.clear()
-            throw error
-        }
-        try Task.checkCancellation()
-        guard invalid.contents().load(as: UInt32.self) == 0 else { throw Failure.nonfinite }
-        return BufferFrame(
-            image: density, wallSeconds: ProcessInfo.processInfo.systemUptime - started,
-            gpuSeconds: tail === originalCommand ? max(0, tail.gpuEndTime - tail.gpuStartTime) : nil)
+        return try await finish(density, invalid: invalid)
     }
 
     /// App extension: retain the clean frame's chroma and add only the grain's linear luminance residual.
+    /// The grain expectation uses the same sublayers, particle bounds and blur as the noisy frame.
+    /// Their difference contains noise without transferring deterministic film edge blur.
+    private static let lutKernels = """
+        kernel void finish_linear_image(device float4 *pixels [[buffer(0)]],
+            device atomic_uint *invalid [[buffer(1)]], constant uint &count [[buffer(2)]],
+            uint i [[thread_position_in_grid]]) {
+            if(i>=count)return;
+            if(!all(isfinite(pixels[i].rgb)))atomic_store_explicit(invalid,1u,memory_order_relaxed);
+            pixels[i].w=1;
+        }
+        kernel void grain_layers_mean_image(device const float4 *density [[buffer(0)]],
+            device float4 *first [[buffer(1)]], device float4 *second [[buffer(2)]], device float4 *third [[buffer(3)]],
+            device const float4 *curves [[buffer(4)]], constant float4 *p [[buffer(5)]],
+            constant uint4 &shape [[buffer(6)]], uint i [[thread_position_in_grid]]) {
+            if(i>=shape.x)return;
+            bool layers=shape.z!=0, positive=(shape.w&1)!=0;
+            float3 split[3];
+            if(layers)for(uint ch=0;ch<3;++ch) {
+                float value=density[i][ch]*(positive?-1.0f:1.0f);
+                float3 layer=lookup_curve(float3(value),curves+ch*shape.y,shape.y);
+                split[0][ch]=layer.x;split[1][ch]=layer.y;split[2][ch]=layer.z;
+            }
+            for(uint layer=0;layer<(layers?3:1);++layer) {
+                float3 value=layers?split[layer]+p[6+layer].xyz:density[i].xyz+p[6].xyz;
+                float3 expected=p[layer].xyz*clamp(value/p[layer].xyz,1e-6f,1-1e-6f);
+                if(layer==0)first[i]=float4(expected,0);
+                else if(layer==1)second[i]=float4(expected,0);
+                else third[i]=float4(expected,0);
+            }
+        }
+        """
+
     private static let monochromeKernel = """
 
         kernel void encode_monochrome_grain(device float4 *grain [[buffer(0)]],

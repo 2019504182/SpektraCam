@@ -7,7 +7,8 @@ import SwiftUI
 @Observable final class EditorSession: Identifiable, Hashable {
     let id = UUID()
     let photo: ImportedPhoto
-    var recipe: EditRecipe
+    let luts: LUTLibrary?
+    var recipe: EditRecipe { didSet { luts?.protect(id, ids: usedLUTIdentifiers) } }
     var geometryImage: UIImage
     var histogram = PhotoHistogram.empty
     var originalHistogram = PhotoHistogram.empty
@@ -42,23 +43,33 @@ import SwiftUI
 
     @ObservationIgnored var recipeDidChange: ((EditRecipe, Bool) -> Void)?
 
-    init(photo: ImportedPhoto, recipe restored: EditRecipe? = nil) {
+    init(photo: ImportedPhoto, recipe restored: EditRecipe? = nil, luts: LUTLibrary? = nil) {
         self.photo = photo
+        self.luts = luts
         filmSource = photo.preview
         renderedSource = photo.preview
         filmRenderer = PhotoRenderer(
             source: photo.preview, directory: Bundle.main.resourceURL!, data: photo.data,
-            temperature: photo.rawTemperature)
+            temperature: photo.rawTemperature, lutDirectory: luts?.directory)
         var initial = restored ?? EditRecipe()
         if initial.temperature == nil { initial.temperature = photo.rawTemperature }
         recipe = initial
         let initialPreview = UIImage(cgImage: photo.preview)
         geometryImage = initialPreview
         displayImage = initialPreview
+        luts?.protect(id, ids: usedLUTIdentifiers)
+    }
+    deinit {
+        let owner = id
+        let store = luts
+        Task { @MainActor in store?.release(owner) }
     }
     static func == (lhs: EditorSession, rhs: EditorSession) -> Bool { lhs.id == rhs.id }
     nonisolated func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
+    var usedLUTIdentifiers: Set<String> {
+        (undoStack + redoStack + [recipe]).reduce(into: Set<String>()) { $0.formUnion($1.look.identifiers) }
+    }
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     var hasEdits: Bool {

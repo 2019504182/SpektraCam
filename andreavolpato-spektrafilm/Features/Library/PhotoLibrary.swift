@@ -9,6 +9,7 @@ import SwiftData
     var saveFailure: String?
     let files: LibraryFiles
     let images: LibraryImages
+    let luts: LUTLibrary
     @ObservationIgnored private let container: ModelContainer
     @ObservationIgnored private let context: ModelContext
     @ObservationIgnored private var records: [UUID: LibrarySchemaV1.Record] = [:]
@@ -45,6 +46,7 @@ import SwiftData
         let initial = try records.values.map { try $0.snapshot() }.sorted(by: Self.order)
         files = try LibraryFiles(root: root, cache: cache, validIDs: Set(initial.map(\.id)))
         images = LibraryImages(files: files, directory: modelDirectory ?? Bundle.main.resourceURL!)
+        luts = LUTLibrary(root: root)
         photos = initial
         for source in try context.fetch(FetchDescriptor<LibrarySchemaV2.PhotosSource>()) {
             sources[source.assetIdentifier] = source
@@ -96,6 +98,34 @@ import SwiftData
         }
     }
 
+    /// Remove an inbox file only after its original and database record are durable.
+    @discardableResult func recoverCaptures() async throws -> Int {
+        var count = 0
+        var failure: Error?
+        for url in try await files.pendingCaptures() {
+            do {
+                _ = try await importPhoto(url)
+                try await files.removeCapture(url)
+                count += 1
+            } catch { if failure == nil { failure = error } }
+        }
+        if let failure { throw failure }
+        return count
+    }
+
+    var usedLUTIdentifiers: Set<String> {
+        var ids = Set<String>()
+        for record in records.values {
+            if let data = record.recipeData {
+                guard let recipe = try? JSONDecoder().decode(EditRecipe.self, from: data) else {
+                    return Set(luts.items.map(\.id))
+                }
+                ids.formUnion(recipe.look.identifiers)
+            }
+        }
+        for recipe in pending.values { ids.formUnion(recipe.look.identifiers) }
+        return ids
+    }
     func queueRecipe(_ recipe: EditRecipe, for id: UUID, immediate: Bool = false) {
         guard records[id] != nil else { return }
         pending[id] = recipe
@@ -113,20 +143,31 @@ import SwiftData
     func flushPending() throws { for id in Array(pending.keys) { try flush(id) } }
     private func flush(_ id: UUID) throws {
         guard let recipe = pending[id], let record = records[id] else { return }
-        let data = try LibraryPhoto.recipeData(recipe)
+        try persistRecipe(recipe, record: record)
+        pending[id] = nil
+        saveFailure = nil
+    }
+    private func persistRecipe(_ recipe: EditRecipe?, record: LibrarySchemaV1.Record) throws {
+        let data = try recipe.map(LibraryPhoto.recipeData)
         let previousData = record.recipeData
         let previousKey = record.renderKey
         record.recipeData = data
-        record.renderKey = LibraryPhoto.key(data)
-        do {
-            try context.save()
-            pending[id] = nil
-            saveFailure = nil
-        } catch {
+        record.renderKey = data.map(LibraryPhoto.key) ?? "original"
+        do { try context.save() } catch {
             record.recipeData = previousData
             record.renderKey = previousKey
             throw error
         }
+    }
+    func revert(_ ids: Set<UUID>) async throws {
+        for id in ids {
+            guard let record = records[id], record.recipeData != nil else { continue }
+            saves[id]?.cancel()
+            try persistRecipe(nil, record: record)
+            pending[id] = nil
+            if let index = photos.firstIndex(where: { $0.id == id }) { photos[index] = try record.snapshot() }
+        }
+        await images.discardMemory()
     }
     func finishEditing(_ id: UUID, recipe: EditRecipe, preview: CGImage?) async throws {
         guard let record = records[id] else { throw LibraryFiles.Failure.missing }

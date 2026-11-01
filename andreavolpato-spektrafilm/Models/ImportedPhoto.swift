@@ -4,6 +4,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 nonisolated struct ImportedPhoto: Sendable {
+    static let thumbnailMaximumPixelSize = 384
     static let previewMaximumPixelSize = 1080
 
     let data: Data
@@ -13,7 +14,7 @@ nonisolated struct ImportedPhoto: Sendable {
     let rawTemperature: Double?
     var metadata = PhotoMetadata()
 
-    static func decode(_ data: Data) -> Self? {
+    static func decode(_ data: Data, maximum: Int = previewMaximumPixelSize) -> Self? {
         guard
             let source = CGImageSourceCreateWithData(
                 data as CFData,
@@ -24,7 +25,7 @@ nonisolated struct ImportedPhoto: Sendable {
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
                     kCGImageSourceShouldCacheImmediately: true,
-                    kCGImageSourceThumbnailMaxPixelSize: previewMaximumPixelSize,
+                    kCGImageSourceThumbnailMaxPixelSize: maximum,
                 ] as CFDictionary)
         else { return nil }
         // Materialize ImageIO's lazy provider before UI and renderer share it.

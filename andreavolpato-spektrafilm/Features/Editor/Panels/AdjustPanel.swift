@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Source exposure precedes film. Creative tone controls follow the model and reuse its frame.
+/// RAW adjustments precede Develop. Whole-photo monochrome follows the selected look.
 struct AdjustPanel: View {
     enum Section: String, CaseIterable {
         case exposure, liftGain, color
@@ -20,10 +20,13 @@ struct AdjustPanel: View {
             switch section {
             case .exposure:
                 NumericControl(
-                    title: "Exposure", value: sourceBinding(\.exposureEV, key: "source.exposure"),
+                    title: "Exposure",
+                    value: Binding(
+                        get: { session.recipe.tone.exposureEV },
+                        set: { value in session.update(key: "tone.exposure") { $0.tone.exposureEV = value } }),
                     range: -5...5, step: 0.05, minimum: -10, maximum: 10, unit: "EV",
-                    identifier: "source.exposure",
-                    onEditingChanged: { session.setInteraction(key: "source.exposure", active: $0) })
+                    identifier: "tone.exposure",
+                    onEditingChanged: { session.setInteraction(key: "tone.exposure", active: $0) })
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 16) {
                         field("camera.exposure_compensation_ev")
@@ -47,20 +50,26 @@ struct AdjustPanel: View {
                                 .secondary)
                             field("enlarger.print_exposure_compensation")
                             DisclosureGroup("Calibration") {
+                                NumericControl(
+                                    title: "Input exposure",
+                                    value: sourceBinding(\.exposureEV, key: "source.exposure"), range: -5...5,
+                                    step: 0.05, minimum: -10, maximum: 10, unit: "EV",
+                                    identifier: "source.exposure")
                                 field("enlarger.normalize_print_exposure").padding(.top, 8)
                             }
-                        }.disabled(session.recipe.bypassesPrint)
+                        }.disabled(session.recipe.bypassesPrint || session.recipe.look.mode == .lut)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
                 } label: {
                     Text("Film & print exposure").foregroundStyle(Color.primary).accessibilityIdentifier(
                         "adjust.exposureStages")
                 }
+                .disabled(session.recipe.look.mode == .lut)
                 Divider()
                 toneControl("S-curve", path: \.contrast, range: 0.25...2, defaultValue: 1, id: "contrast")
                 toneControl("Pivot", path: \.pivot, range: 0...1, defaultValue: 0.35, id: "pivot")
             case .liftGain:
                 toneControl(
-                    "Highlights", path: \.highlights, range: -1...1, defaultValue: 0, id: "highlights")
+                    "Highlights", path: \.highlights, range: -2...2, defaultValue: 0, id: "highlights")
                 toneControl("Shadows", path: \.shadows, range: -1...1, defaultValue: 0, id: "shadows")
             case .color:
                 if let temperature = session.recipe.temperature {
@@ -101,6 +110,29 @@ struct AdjustPanel: View {
                         })
                 )
                 .accessibilityIdentifier("tone.monochrome")
+                DisclosureGroup("Dye couplers") {
+                    EffectSection(
+                        title: "Dye couplers", prefix: "film_render.dir_couplers", prominent: ["amount"],
+                        session: session
+                    ).padding(.top, 8)
+                }.disabled(session.recipe.look.mode == .lut)
+                DisclosureGroup("Details") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ParameterFields(session: session, prefix: "scanner")
+                        ParameterFields(
+                            session: session, prefix: "enlarger",
+                            names: [
+                                "preflash_exposure", "preflash_y_filter_shift", "preflash_m_filter_shift",
+                            ]
+                        ).disabled(session.recipe.bypassesPrint)
+                        ParameterFields(
+                            session: session, prefix: "film_render", names: ["density_curve_gamma"])
+                        ParameterFields(
+                            session: session, prefix: "camera",
+                            names: ["lens_blur_um", "film_format_mm", "filter_uv", "filter_ir"])
+                    }.padding(.top, 8)
+                }
+                .disabled(session.recipe.look.mode == .lut)
                 DisclosureGroup("Print balance") {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -118,7 +150,7 @@ struct AdjustPanel: View {
                                 prominent: ["gamma_factor"], session: session, printOnly: true
                             ).padding(.top, 12)
                         }
-                    }.disabled(session.recipe.bypassesPrint)
+                    }.disabled(session.recipe.bypassesPrint || session.recipe.look.mode == .lut)
                     if session.recipe.bypassesPrint {
                         Text("Direct scan skips print controls.").font(.caption).foregroundStyle(.secondary)
                     }
@@ -134,7 +166,12 @@ struct AdjustPanel: View {
             title: title,
             value: Binding(
                 get: { session.recipe.tone[keyPath: path] },
-                set: { value in session.update(key: "tone." + id) { $0.tone[keyPath: path] = value } }),
+                set: { value in
+                    session.update(key: "tone." + id) {
+                        if id == "highlights" { $0.tone.algorithm = 2 }
+                        $0.tone[keyPath: path] = value
+                    }
+                }),
             range: range, step: 0.01, minimum: range.lowerBound, maximum: range.upperBound,
             identifier: "tone." + id, defaultValue: defaultValue,
             onEditingChanged: { session.setInteraction(key: "tone." + id, active: $0) })

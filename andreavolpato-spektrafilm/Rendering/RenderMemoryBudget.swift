@@ -19,9 +19,10 @@ nonisolated enum RenderMemoryBudget {
         else { throw Failure() }
         let pixels = UInt64(width) * UInt64(height)
         guard pixels <= UInt64(device.maxBufferLength / 16) else { throw Failure() }
-        var estimate = pixels * 192 + 96 * 1024 * 1024
+        var estimate = pixels * 224 + 96 * 1024 * 1024
         if recipe.monochromeGrain && recipe.flag("film_render.grain.active") { estimate += pixels * 32 }
-        if !recipe.tone.isIdentity { estimate += pixels * 16 }
+        if !recipe.tone.isIdentity { estimate += pixels * 48 }
+        if recipe.look.mode == .lut { estimate += pixels * 96 }
         if recipe.temperature != nil { estimate += pixels * 32 }
         let pitch = recipe.number("camera.film_format_mm") * 1000 / Double(max(width, height))
         for prefix in ["camera.diffusion_filter", "enlarger.diffusion_filter"] {
