@@ -5,6 +5,8 @@ root=pathlib.Path(__file__).resolve().parents[1]
 out=pathlib.Path('/private/tmp/spektrafilm-build');out.mkdir(exist_ok=True)
 xcode=pathlib.Path('/Applications/Xcode.app/Contents/Developer')
 env=os.environ.copy();env['DEVELOPER_DIR']=str(xcode)
+sources = {p.stem: p for p in (root/'andreavolpato-spektrafilm').rglob('*.swift')}
+assert len(sources) == len(list((root/'andreavolpato-spektrafilm').rglob('*.swift'))), 'Duplicate Swift file names'
 checks={
  'color-benchmark':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','MetalModelResources','MetalColorPipeline'],['.']),
  'color-pipeline':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline'],['.']),
@@ -35,10 +37,13 @@ checks={
 }
 checks['histogram'] = (['PhotoHistogram'], [])
 checks['raw-input'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRenderer','PhotoMetadata','ImportedPhoto'], [])
+checks['tone'] = (checks['recipe'][0] + ['ToneRenderer','PhotoColorBridge'], [])
 checks['source'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRenderer'], [])
 checks['exposure'] = (checks['color-pipeline'][0], ['.'])
-checks['preview'] = (checks['metal-film'][0] + ['SourceImageRenderer','PhotoExporter','GeometryRenderer','RenderMemoryBudget','PhotoRenderer'], ['.'])
+checks['preview'] = (checks['metal-film'][0] + ['SourceImageRenderer','ToneRenderer','PhotoExporter','GeometryRenderer','RenderMemoryBudget','PhotoRenderer'], ['.'])
 checks['processed-export'] = (checks['preview'][0] + ['PhotoMetadata','ImportedPhoto'], ['.'])
+checks['library'] = (checks['processed-export'][0] + ['LibraryPhoto','LibraryFiles','LibraryImages','PhotoLibrary'], ['.'])
+checks['monochrome-grain'] = (checks['metal-film'][0], ['.'])
 checks['film-noise'] = (checks['metal-film'][0], ['.'])
 checks['film-benchmark'] = (checks['metal-film'][0], ['.'])
 parser=argparse.ArgumentParser();parser.add_argument('checks',nargs='*',choices=list(checks));parser.add_argument('--debug-benchmarks', action='store_true');parser.add_argument('--input', nargs='+', default=[]);parser.add_argument('--simulator', action='store_true');args=parser.parse_args()
@@ -55,6 +60,6 @@ if args.simulator:
  compiler += ['-target',platform.machine()+'-apple-ios27.2-simulator']
 for name in args.checks or [key for key in checks if not key.startswith('metal-') and not key.endswith('-benchmark') and key not in ['raw-input','processed-export']]:
  files,arguments=checks[name];binary=out/(name+'-checks'+('-simulator' if args.simulator else ''))
- subprocess.run(compiler+(['-O'] if name.endswith('-benchmark') and not args.debug_benchmarks else [])+[str(root/'andreavolpato-spektrafilm'/(f+'.swift')) for f in files]+[str(root/'Scripts'/(name+'-checks.swift')),'-o',str(binary)],env=env,check=True)
+ subprocess.run(compiler+(['-O'] if name.endswith('-benchmark') and not args.debug_benchmarks else [])+[str(sources[f]) for f in files]+[str(root/'Scripts'/(name+'-checks.swift')),'-o',str(binary)],env=env,check=True)
  env['SPEKTRAFILM_BENCHMARK_CONFIGURATION']='debug' if args.debug_benchmarks else 'optimized'
- subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export'] else []),env=env,check=True)
+ subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export','library'] else []),env=env,check=True)

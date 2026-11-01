@@ -1,0 +1,177 @@
+import CoreGraphics
+import Foundation
+import Observation
+import SwiftData
+
+/// The database owns the index and recipe. Original files never change after import.
+@MainActor @Observable final class PhotoLibrary {
+    private(set) var photos: [LibraryPhoto] = []
+    var saveFailure: String?
+    let files: LibraryFiles
+    let images: LibraryImages
+    @ObservationIgnored private let container: ModelContainer
+    @ObservationIgnored private let context: ModelContext
+    @ObservationIgnored private var records: [UUID: LibrarySchemaV1.Record] = [:]
+    private(set) var importedAssetIdentifiers: [String] = []
+    @ObservationIgnored private var sources: [String: LibrarySchemaV2.PhotosSource] = [:]
+    @ObservationIgnored private var pending: [UUID: EditRecipe] = [:]
+    @ObservationIgnored private var saves: [UUID: Task<Void, Never>] = [:]
+
+    init(root: URL? = nil, cache: URL? = nil, modelDirectory: URL? = nil) throws {
+        let root =
+            try root
+            ?? FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask,
+                appropriateFor: nil, create: true
+            ).appendingPathComponent("SpektraCam")
+        let cache =
+            try cache
+            ?? FileManager.default.url(
+                for: .cachesDirectory, in: .userDomainMask,
+                appropriateFor: nil, create: true
+            ).appendingPathComponent("SpektraCam")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let schema = Schema(versionedSchema: LibrarySchemaV2.self)
+        let configuration = ModelConfiguration(
+            "Library", schema: schema,
+            url: root.appendingPathComponent("Library.store"), cloudKitDatabase: .none)
+        container = try ModelContainer(
+            for: schema, migrationPlan: LibraryMigrationPlan.self, configurations: [configuration])
+        context = ModelContext(container)
+        context.autosaveEnabled = false
+        for record in try context.fetch(FetchDescriptor<LibrarySchemaV1.Record>()) {
+            records[record.id] = record
+        }
+        let initial = try records.values.map { try $0.snapshot() }.sorted(by: Self.order)
+        files = try LibraryFiles(root: root, cache: cache, validIDs: Set(initial.map(\.id)))
+        images = LibraryImages(files: files, directory: modelDirectory ?? Bundle.main.resourceURL!)
+        photos = initial
+        for source in try context.fetch(FetchDescriptor<LibrarySchemaV2.PhotosSource>()) {
+            sources[source.assetIdentifier] = source
+        }
+        importedAssetIdentifiers = sources.keys.sorted()
+    }
+    private static func order(_ a: LibraryPhoto, _ b: LibraryPhoto) -> Bool {
+        a.date == b.date
+            ? (a.importedAt == b.importedAt ? a.id.uuidString < b.id.uuidString : a.importedAt < b.importedAt)
+            : a.date < b.date
+    }
+    func photo(_ id: UUID) -> LibraryPhoto? { photos.first { $0.id == id } }
+    @discardableResult func importPhoto(_ url: URL, now: Date = Date(), assetIdentifier: String? = nil)
+        async throws -> LibraryPhoto
+    {
+        if let assetIdentifier, let id = sources[assetIdentifier]?.photoID, let existing = photo(id) {
+            return existing
+        }
+        let imported = try await files.importPhoto(from: url, now: now)
+        if let existing = records.values.first(where: { $0.contentHash == imported.contentHash }) {
+            try await files.removeFiles(imported)
+            try rememberSource(assetIdentifier, photoID: existing.id)
+            return try existing.snapshot()
+        }
+        do {
+            let record = try LibrarySchemaV1.Record(imported)
+            context.insert(record)
+            try rememberSource(assetIdentifier, photoID: imported.id)  // Saves the record and identifier together.
+            records[imported.id] = record
+            photos.append(imported)
+            photos.sort(by: Self.order)
+        } catch {
+            context.rollback()
+            try? await files.removeFiles(imported)
+            throw error
+        }
+        return imported
+    }
+    private func rememberSource(_ identifier: String?, photoID: UUID) throws {
+        let source = identifier.map { LibrarySchemaV2.PhotosSource(assetIdentifier: $0, photoID: photoID) }
+        if let source { context.insert(source) }
+        do { try context.save() } catch {
+            context.rollback()
+            throw error
+        }
+        if let source {
+            sources[source.assetIdentifier] = source
+            importedAssetIdentifiers = sources.keys.sorted()
+        }
+    }
+
+    func queueRecipe(_ recipe: EditRecipe, for id: UUID, immediate: Bool = false) {
+        guard records[id] != nil else { return }
+        pending[id] = recipe
+        saves[id]?.cancel()
+        if immediate {
+            do { try flush(id) } catch { saveFailure = error.localizedDescription }
+        } else {
+            saves[id] = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                do { try self.flush(id) } catch { self.saveFailure = error.localizedDescription }
+            }
+        }
+    }
+    func flushPending() throws { for id in Array(pending.keys) { try flush(id) } }
+    private func flush(_ id: UUID) throws {
+        guard let recipe = pending[id], let record = records[id] else { return }
+        let data = try LibraryPhoto.recipeData(recipe)
+        let previousData = record.recipeData
+        let previousKey = record.renderKey
+        record.recipeData = data
+        record.renderKey = LibraryPhoto.key(data)
+        do {
+            try context.save()
+            pending[id] = nil
+            saveFailure = nil
+        } catch {
+            record.recipeData = previousData
+            record.renderKey = previousKey
+            throw error
+        }
+    }
+    func finishEditing(_ id: UUID, recipe: EditRecipe, preview: CGImage?) async throws {
+        guard let record = records[id] else { throw LibraryFiles.Failure.missing }
+        saves[id]?.cancel()
+        pending[id] = recipe
+        try flush(id)
+        let saved = try record.snapshot()
+        // Caches are replaceable. A cache failure must not undo a durable recipe save.
+        if let preview { try? await images.store(preview, photo: saved) }
+        if let index = photos.firstIndex(where: { $0.id == id }) { photos[index] = saved }
+    }
+    func recipe(_ id: UUID) throws -> EditRecipe? {
+        guard let record = records[id] else { throw LibraryFiles.Failure.missing }
+        if let pending = pending[id] { return pending }
+        guard let data = record.recipeData else { return nil }
+        // Preserve unknown or damaged recipes. Never replace them with defaults.
+        return try JSONDecoder().decode(EditRecipe.self, from: data)
+    }
+    func setLocationName(_ name: String, for id: UUID) throws {
+        guard let record = records[id] else { return }
+        record.locationName = name
+        try context.save()
+        if let index = photos.firstIndex(where: { $0.id == id }) { photos[index] = try record.snapshot() }
+    }
+    func delete(_ ids: Set<UUID>) async throws {
+        for id in ids {
+            guard let record = records[id], let photo = photo(id) else { continue }
+            saves[id]?.cancel()
+            saves[id] = nil
+            pending[id] = nil
+            let staged = try await files.stageRemoval(photo)
+            context.delete(record)
+            let links = sources.values.filter { $0.photoID == id }
+            for link in links { context.delete(link) }
+            do { try context.save() } catch {
+                context.rollback()
+                try? await files.restore(staged, photo: photo)
+                throw error
+            }
+            for link in links { sources[link.assetIdentifier] = nil }
+            importedAssetIdentifiers = sources.keys.sorted()
+            records[id] = nil
+            photos.removeAll { $0.id == id }
+            await files.finishRemoval(staged, photo: photo)
+        }
+        await images.discardMemory()
+    }
+}

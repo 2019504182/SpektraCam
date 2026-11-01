@@ -20,7 +20,7 @@ private struct Fixture: Decodable { let cases: [Case], strengths: [Strength] }
         func rgb(_ x: [Double]) -> SIMD3<Double> { .init(x[0], x[1], x[2]) }
         let source = try String(
             contentsOf: root.appendingPathComponent(
-                "andreavolpato-spektrafilm/ModelData/Diffusion.metalSource"), encoding: .utf8)
+                "andreavolpato-spektrafilm/Resources/ModelData/Diffusion.metalSource"), encoding: .utf8)
         let gpu = try MetalDiffusion(source: source)
         var count = 0
         var maximum = 0.0

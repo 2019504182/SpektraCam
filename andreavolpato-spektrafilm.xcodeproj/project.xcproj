@@ -28,7 +28,11 @@
       "id": "7303FD3330955003002CE59C",
       "product": "Products/SpektrafilmUITests.xctest",
       "product-type": "bundle.ui-testing",
-      "build-phases": [ "compile-sources", "frameworks", "resources" ],
+      "build-phases": [
+        "compile-sources",
+        "frameworks",
+        "resources",
+      ],
       "build-settings": {
         "GENERATE_INFOPLIST_FILE": "YES",
         "PRODUCT_BUNDLE_IDENTIFIER": "io.github.runzeni.spektrafilm.uitests",
@@ -37,8 +41,7 @@
         "TARGETED_DEVICE_FAMILY": "1",
         "TEST_TARGET_NAME": "andreavolpato-spektrafilm",
       },
-    },
-    {
+    }, {
       "name": "andreavolpato-spektrafilm",
       "id": "7303FD3330955003002CE59B",
       "product": "Products/andreavolpato-spektrafilm.app",
@@ -52,7 +55,7 @@
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": "2",
         "ENABLE_PREVIEWS": "YES",
         "GENERATE_INFOPLIST_FILE": "YES",
         "INFOPLIST_KEY_CFBundleDisplayName": "SpektraCam",
@@ -65,7 +68,7 @@
           "$(inherited)",
           "@executable_path/Frameworks",
         ],
-        "MARKETING_VERSION": "0.1.0",
+        "MARKETING_VERSION": "0.1.1",
         "PRODUCT_BUNDLE_IDENTIFIER": "io.github.runzeni.andreavolpato-spektrafilm",
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "STRING_CATALOG_GENERATE_SYMBOLS": "YES",

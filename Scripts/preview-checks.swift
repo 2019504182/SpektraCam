@@ -4,7 +4,7 @@ import Foundation
 @main struct Checks {
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let data = root.appendingPathComponent("andreavolpato-spektrafilm/ModelData")
+        let data = root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
         let width = 1080
         let height = 810
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -46,6 +46,17 @@ import Foundation
         let restored = try await renderer.render(sourceEV)
         let restoredPixels = try PhotoColorBridge.decode(restored)
         precondition(restoredPixels == sourcePixels, "Mix invalidated the wrong film frame")
+        var toneRecipe = sourceEV
+        toneRecipe.tone.contrast = 1.4
+        let toneStart = ProcessInfo.processInfo.systemUptime
+        let graded = try await renderer.render(toneRecipe)
+        let toneMilliseconds = (ProcessInfo.processInfo.systemUptime - toneStart) * 1000
+        let gradedPixels = try PhotoColorBridge.decode(graded)
+        precondition(gradedPixels != sourcePixels, "Tone was not applied to the cached film frame")
+        let neutralAgain = try await renderer.render(sourceEV)
+        let neutralPixels = try PhotoColorBridge.decode(neutralAgain)
+        precondition(neutralPixels == sourcePixels, "Tone reset changed the cached frame")
+        print("1080 px native tone pass on cached film frame, Debug ms:", toneMilliseconds)
         print(
             "PASS: preview worker loads bundled resources, stable film frame, film and source exposure changes, Mix cache and immutable source; cached Debug frame \(frameMilliseconds) ms on Mac"
         )

@@ -4,6 +4,7 @@ import XCTest
 final class EditorInteractionTests: XCTestCase {
     @MainActor func testNativeZoomAndGuardedExit() throws {
         let app = openPhoto()
+        app.buttons["editor.tool.develop"].tap()
         let photo = app.images["Edited photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 30))
         let fit = NSPredicate(format: "value == %@", "100 percent zoom")
@@ -32,11 +33,6 @@ final class EditorInteractionTests: XCTestCase {
                 forDuration: 0.05,
                 thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.4)))
         XCTAssertTrue(app.buttons["editor.back"].exists, "Editing allowed an accidental navigation pop")
-        app.buttons["editor.back"].tap()
-        XCTAssertTrue(app.sheets["Return to Photos?"].waitForExistence(timeout: 5))
-        // Native popovers dismiss by tapping outside; they omit a separate Cancel row.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.4)).tap()
-        XCTAssertTrue(app.buttons["editor.histogram"].exists)
         let image = XCTAttachment(screenshot: app.screenshot())
         image.name = "Native zoom and guarded exit"
         image.lifetime = .keepAlways
@@ -52,25 +48,266 @@ final class EditorInteractionTests: XCTestCase {
         locked.name = "iPhone portrait orientation lock"
         locked.lifetime = .keepAlways
         add(locked)
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.sheets["Return to Photo?"].exists)
+        XCTAssertFalse(app.buttons["editor.back"].exists)
+    }
+    @MainActor private func importPhoto(count: Int = 1) -> XCUIApplication {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(bundleIdentifier: "io.github.runzeni.andreavolpato-spektrafilm")
+        app.launchArguments = ["--ui-test-library", "--reset-test-library"]
+        app.launch()
+        XCTAssertTrue(app.buttons["library.import"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["library.delete"].isEnabled)
+        app.buttons["library.import"].tap()
+        app.buttons["From Photos"].tap()
+        // Prefer native picker elements. Some Simulator runs expose only its remote surface.
+        let cells = app.images.matching(identifier: "PXGGridLayout-Info")
+        if cells.firstMatch.waitForExistence(timeout: 5) {
+            cells.element(boundBy: 0).tap()
+            if count > 1 { cells.element(boundBy: 1).tap() }
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.167, dy: 0.24)).press(forDuration: 0.15)
+            if count > 1 {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24)).press(forDuration: 0.15)
+            }
+        }
+        let picked = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        picked.name = "System picker selection"
+        picked.lifetime = .keepAlways
+        self.add(picked)
+        let done = app.navigationBars["Photos"].buttons["Done"]
+        if done.exists {
+            XCTAssertTrue(done.isEnabled)
+            done.tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.91, dy: 0.115)).press(forDuration: 0.15)
+        }
+        let photo = libraryPhotos(app).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 30), app.debugDescription)
+        return app
+    }
+    /// A physical thumb drag also checks the new native glass track, independent of AX value formatting.
+    @MainActor private func drag(_ slider: XCUIElement, to position: CGFloat) {
+        let current: CGFloat
+        if let number = slider.value as? NSNumber {
+            current = CGFloat(number.doubleValue)
+        } else {
+            let text = slider.value as? String ?? "50%"
+            let number =
+                Double(text.replacingOccurrences(of: "%", with: "")) ?? (text.contains("%") ? 50 : 0.5)
+            current = CGFloat(text.contains("%") ? number / 100 : number)
+        }
+        slider.coordinate(withNormalizedOffset: CGVector(dx: current, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: position, dy: 0.5)),
+            withVelocity: .slow, thenHoldForDuration: 0.1)
+    }
+    @MainActor private func libraryPhotos(_ app: XCUIApplication) -> XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'library.photo.'"))
     }
     @MainActor private func openPhoto() -> XCUIApplication {
-        continueAfterFailure = false
-        let app = XCUIApplication(bundleIdentifier: "io.github.runzeni.andreavolpato-spektrafilm")
-        app.launch()
-        let open = app.buttons["checkmark"]
-        XCTAssertTrue(open.waitForExistence(timeout: 15))
-        // The picker can finish loading after the toolbar appears on a cold launch.
-        let ready = NSPredicate(format: "enabled == true")
-        for _ in 0..<3 {
-            if open.isEnabled { break }
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.167, dy: 0.29)).tap()
-            let selection = XCTNSPredicateExpectation(predicate: ready, object: open)
-            if XCTWaiter.wait(for: [selection], timeout: 3) == .completed { break }
-        }
-        XCTAssertTrue(open.isEnabled, "The seeded Simulator photo was not selected")
-        open.tap()
+        let app = importPhoto()
+        libraryPhotos(app).firstMatch.tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 10))
+        app.buttons["photo.develop"].tap()
         XCTAssertTrue(app.buttons["editor.histogram"].waitForExistence(timeout: 30))
         return app
+    }
+
+    @MainActor func testLibraryRestartEditAndDelete() {
+        let app = openPhoto()
+        app.buttons["editor.tool.adjust"].tap()
+        let slider = app.sliders["source.exposure"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        drag(slider, to: 0.6)
+        let savedValue = app.buttons["source.exposure.value"].value as? String
+        XCTAssertNotEqual(savedValue, "0 EV")
+        // A recipe also survives termination without using the editor's Save action.
+        Thread.sleep(forTimeInterval: 0.5)
+        app.terminate()
+        app.launchArguments = ["--ui-test-library"]
+        app.launch()
+        XCTAssertTrue(libraryPhotos(app).firstMatch.waitForExistence(timeout: 15))
+        libraryPhotos(app).firstMatch.tap()
+        app.buttons["photo.develop"].tap()
+        XCTAssertTrue(app.buttons["editor.tool.adjust"].waitForExistence(timeout: 30))
+        app.buttons["editor.tool.adjust"].tap()
+        XCTAssertEqual(app.buttons["source.exposure.value"].value as? String, savedValue)
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.delete"].waitForExistence(timeout: 30))
+        app.buttons["photo.delete"].tap()
+        app.buttons["Delete App Copy"].tap()
+        XCTAssertTrue(app.buttons["library.import"].waitForExistence(timeout: 10))
+        XCTAssertEqual(libraryPhotos(app).count, 0)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Your Library"].waitForExistence(timeout: 10))
+        XCTAssertEqual(libraryPhotos(app).count, 0)
+    }
+
+    @MainActor func testLibraryFiltersSelectionAndOriginalExport() {
+        let app = importPhoto()
+        app.buttons["library.filter"].tap()
+        app.buttons["RAW"].tap()
+        // The seeded first asset is a rendered photo.
+        XCTAssertTrue(app.staticTexts["No RAW Photos"].waitForExistence(timeout: 5))
+        app.buttons["library.filter"].tap()
+        app.buttons["All"].tap()
+        XCTAssertTrue(libraryPhotos(app).firstMatch.waitForExistence(timeout: 5))
+        app.buttons["library.select"].tap()
+        XCTAssertFalse(app.buttons["library.delete"].isEnabled)
+        libraryPhotos(app).firstMatch.tap()
+        XCTAssertTrue(app.buttons["library.delete"].isEnabled)
+        XCTAssertTrue(app.buttons["Cancel Selection"].exists)
+        app.buttons["library.select"].tap()
+        XCTAssertFalse(app.buttons["library.delete"].isEnabled)
+        libraryPhotos(app).firstMatch.tap()
+        app.buttons["photo.export"].tap()
+        XCTAssertTrue(app.buttons["S"].waitForExistence(timeout: 10))
+        app.buttons["S"].tap()
+        XCTAssertTrue(app.buttons["export.save"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["export.save"].isHittable)
+        XCTAssertTrue(app.buttons["export.share"].isHittable)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 5))
+        let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        image.name = "Photo view before development"
+        image.lifetime = .keepAlways
+        add(image)
+    }
+
+    @MainActor func testFilmstripAndEditedBadge() {
+        let app = importPhoto(count: 2)
+        XCTAssertEqual(libraryPhotos(app).count, 2)
+        let firstID = libraryPhotos(app).element(boundBy: 0).identifier.replacingOccurrences(
+            of: "library.photo.", with: "")
+        let secondID = libraryPhotos(app).element(boundBy: 1).identifier.replacingOccurrences(
+            of: "library.photo.", with: "")
+        libraryPhotos(app).element(boundBy: 0).tap()
+        let first = app.buttons["photo.filmstrip." + firstID]
+        let second = app.buttons["photo.filmstrip." + secondID]
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertTrue(first.isSelected)
+        second.tap()
+        XCTAssertTrue(second.isSelected)
+        XCTAssertFalse(first.isSelected)
+        app.buttons["photo.develop"].tap()
+        XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 30))
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 30))
+        XCTAssertEqual(second.value as? String, "Edited")
+        app.navigationBars.buttons["BackButton"].tap()
+        XCTAssertTrue(libraryPhotos(app).firstMatch.waitForExistence(timeout: 10))
+        let edited = app.buttons["library.photo." + secondID]
+        XCTAssertEqual(edited.value as? String, "Edited")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Edited badge in gallery"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor func testPhotoInformationAndCanvasBounds() {
+        let app = openPhoto()
+        let info = app.buttons["editor.info"]
+        XCTAssertTrue(info.waitForExistence(timeout: 10))
+        let image = app.images["Edited photo"]
+        XCTAssertTrue(image.waitForExistence(timeout: 20))
+        XCTAssertEqual(info.value as? String, "Collapsed")
+        let toolbar =
+            ["crop", "develop", "adjust", "effects"].map { app.buttons["editor.tool." + $0] }
+            + [app.buttons["editor.export"]]
+        for button in toolbar {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44, "Tool touch area is too narrow")
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertEqual(button.frame.minY, toolbar[0].frame.minY, accuracy: 1)
+        }
+        let before = image.frame
+        XCTAssertGreaterThanOrEqual(before.minY, info.frame.maxY + 6)
+        XCTAssertLessThanOrEqual(before.maxY, app.buttons["editor.tool.develop"].frame.minY + 1)
+        app.buttons["editor.histogram"].tap()
+        XCTAssertEqual(info.value as? String, "Collapsed", "Histogram opened photo details")
+        info.tap()
+        XCTAssertEqual(info.value as? String, "Expanded")
+        XCTAssertEqual(image.frame.minY, before.minY, accuracy: 1)
+        XCTAssertEqual(image.frame.height, before.height, accuracy: 1)
+        app.buttons["editor.histogram"].tap()
+        XCTAssertEqual(info.value as? String, "Expanded", "Histogram closed photo details")
+        info.tap()
+        XCTAssertEqual(info.value as? String, "Collapsed")
+        app.buttons["editor.tool.crop"].tap()
+        XCTAssertFalse(app.buttons["editor.info"].exists)
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.info"].waitForExistence(timeout: 30))
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "photo.banner.date").firstMatch.exists)
+        let badge = app.images["photo.badge.edited"]
+        XCTAssertTrue(badge.exists)
+        XCTAssertLessThan(badge.frame.maxY, app.buttons["photo.info"].frame.minY)
+        let viewerInfo = app.buttons["photo.info"]
+        app.buttons["photo.histogram"].tap()
+        XCTAssertEqual(viewerInfo.value as? String, "Collapsed")
+        viewerInfo.tap()
+        XCTAssertEqual(viewerInfo.value as? String, "Expanded")
+    }
+
+    @MainActor func testGroupedPanelsAndSliderReset() {
+        let app = openPhoto()
+        XCTAssertEqual(app.buttons["editor.expand"].value as? String, "Expanded")
+        let compare = app.buttons["editor.compare"]
+        XCTAssertGreaterThanOrEqual(compare.frame.minY, app.buttons["editor.info"].frame.maxY)
+        XCTAssertTrue(app.buttons["Camera"].exists)
+        app.buttons["editor.tool.adjust"].tap()
+        drag(app.sliders["source.exposure"], to: 0.7)
+        XCTAssertNotEqual(app.buttons["source.exposure.value"].value as? String, "0 EV")
+        app.buttons["editor.history"].tap()
+        app.buttons["Undo"].tap()
+        XCTAssertEqual(
+            app.buttons["source.exposure.value"].value as? String, "0 EV", "A drag must undo in one step")
+        let contrast = app.sliders["tone.contrast"]
+        XCTAssertTrue(contrast.waitForExistence(timeout: 5))
+        drag(contrast, to: 0.8)
+        XCTAssertNotEqual(
+            (app.buttons["tone.contrast.value"].value as? String)?.trimmingCharacters(in: .whitespaces), "1")
+        contrast.doubleTap()
+        XCTAssertEqual(
+            (app.buttons["tone.contrast.value"].value as? String)?.trimmingCharacters(in: .whitespaces), "1")
+        app.buttons["editor.expand"].tap()
+        XCTAssertEqual(app.buttons["editor.expand"].value as? String, "Expanded")
+        app.images["Edited photo"].coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.02)).tap()
+        XCTAssertTrue(
+            XCTWaiter.wait(
+                for: [
+                    XCTNSPredicateExpectation(
+                        predicate: NSPredicate(format: "value == %@", "Collapsed"),
+                        object: app.buttons["editor.expand"])
+                ], timeout: 3) == .completed)
+        app.buttons["adjust.section.liftGain"].tap()
+        XCTAssertTrue(app.sliders["tone.shadows"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sliders["tone.highlights"].waitForExistence(timeout: 5))
+        XCTAssertLessThan(app.sliders["tone.highlights"].frame.minY, app.sliders["tone.shadows"].frame.minY)
+        app.buttons["adjust.section.color"].tap()
+        let bw = app.descendants(matching: .any).matching(identifier: "tone.monochrome").firstMatch
+        XCTAssertTrue(bw.waitForExistence(timeout: 5))
+        bw.tap()
+        XCTAssertEqual(bw.value as? String, "1")
+        app.buttons["editor.tool.effects"].tap()
+        let grain = app.descendants(matching: .any).matching(identifier: "grain.monochrome").firstMatch
+        XCTAssertTrue(grain.waitForExistence(timeout: 5))
+        grain.tap()
+        XCTAssertEqual(grain.value as? String, "1")
+        app.buttons["effects.section.halation"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "film_render.halation.active").firstMatch
+                .waitForExistence(timeout: 5))
+        app.buttons["effects.section.diffusion"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "camera.diffusion_filter.active").firstMatch
+                .waitForExistence(timeout: 5))
+        app.buttons["editor.back"].tap()
+        XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 30))
     }
 
     @MainActor func testSourceResetAndDiffusionControls() {
@@ -78,7 +315,7 @@ final class EditorInteractionTests: XCTestCase {
         app.buttons["editor.tool.adjust"].tap()
         let exposure = app.sliders["source.exposure"]
         XCTAssertTrue(exposure.waitForExistence(timeout: 5))
-        exposure.adjust(toNormalizedSliderPosition: 0.6)
+        drag(exposure, to: 0.6)
         let entered = app.buttons["source.exposure.value"]
         XCTAssertNotEqual(entered.value as? String, "0 EV")
         app.buttons["editor.history"].tap()
@@ -91,15 +328,16 @@ final class EditorInteractionTests: XCTestCase {
         let area = app.sliders["film_render.grain.particle_area_um2"]
         let areaValue = app.buttons["film_render.grain.particle_area_um2.value"]
         let stockArea = areaValue.value as? String
-        area.adjust(toNormalizedSliderPosition: 0.5)
+        drag(area, to: 0.5)
         XCTAssertNotEqual(areaValue.value as? String, stockArea)
         app.buttons["grain.stockDefaults"].tap()
         XCTAssertEqual(areaValue.value as? String, stockArea)
-        let controls = app.scrollViews["editor.controls"]
+        app.buttons["effects.section.diffusion"].tap()
         for key in ["camera.diffusion_filter.active", "enlarger.diffusion_filter.active"] {
             let toggle = app.descendants(matching: .any).matching(identifier: key).firstMatch
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
             for _ in 0..<8 {
-                let top = controls.frame.minY + 24
+                let top = app.buttons["editor.expand"].frame.maxY + 24
                 let bottom = app.buttons["editor.tool.effects"].frame.minY - 24
                 if toggle.isHittable && toggle.frame.minY >= top && toggle.frame.maxY <= bottom { break }
                 let upwards = toggle.frame.midY > (top + bottom) / 2
@@ -134,8 +372,12 @@ final class EditorInteractionTests: XCTestCase {
         app.buttons["Standard"].tap()
         let save = app.buttons["export.save"]
         XCTAssertTrue(save.waitForExistence(timeout: 45))
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: save)
+        waitForExpectations(timeout: 45)
         XCTAssertTrue(save.isHittable, "Default export layout hid Save to Photos")
         XCTAssertTrue(app.buttons["export.share"].isHittable)
+        XCTAssertGreaterThan(
+            app.buttons["Done"].frame.minY, app.frame.height * 0.4, "Export opened at full height")
         let dimensions = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "1080")).firstMatch
         XCTAssertTrue(dimensions.exists)
         XCTAssertFalse(

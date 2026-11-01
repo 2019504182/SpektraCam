@@ -5,7 +5,7 @@ private struct Fixture: Decodable {let width: Int,height: Int,input: [[Double]],
     static func main() async throws {
         let root=URL(fileURLWithPath:CommandLine.arguments[1])
         let fixture=try JSONDecoder().decode(Fixture.self,from:Data(contentsOf:root.appending(path:"Reference/Fixtures/color-pipeline.json")))
-        let folder=root.appending(path:"andreavolpato-spektrafilm/ModelData")
+        let folder=root.appending(path:"andreavolpato-spektrafilm/Resources/ModelData")
         let library=try ModelLibrary(directory:folder)
         let source=try String(contentsOf:folder.appending(path:"ColorPipeline.metalSource"),encoding:.utf8)
         let engine=try MetalColorPipeline(source:source)

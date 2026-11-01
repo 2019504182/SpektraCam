@@ -4,7 +4,7 @@ import Metal
 @main struct Benchmark {
   static func main() async throws {
     let root = URL(fileURLWithPath: CommandLine.arguments[1])
-    let data = root.appendingPathComponent("andreavolpato-spektrafilm/ModelData")
+    let data = root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
     let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
       try String(contentsOf: data.appendingPathComponent($0 + ".metalSource"), encoding: .utf8)
     }

@@ -4,7 +4,7 @@ private struct Fixture: Decodable {let input: [[Double]]}
 @main struct ColorBenchmark {
     static func seconds(_ duration: Duration)->Double {let c=duration.components;return Double(c.seconds)+Double(c.attoseconds)/1e18}
     static func main() async throws {
-        let root=URL(fileURLWithPath:CommandLine.arguments[1]),folder=root.appending(path:"andreavolpato-spektrafilm/ModelData")
+        let root=URL(fileURLWithPath:CommandLine.arguments[1]),folder=root.appending(path:"andreavolpato-spektrafilm/Resources/ModelData")
         let fixture=try JSONDecoder().decode(Fixture.self,from:Data(contentsOf:root.appending(path:"Reference/Fixtures/color-pipeline.json")))
         let library=try ModelLibrary(directory:folder)
         var recipe=EditRecipe();recipe.flags["camera.auto_exposure"]=false

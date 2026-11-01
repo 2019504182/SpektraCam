@@ -9,7 +9,7 @@ private struct Fixture: Decodable { let cases: [Case] }
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let source = try String(
             contentsOf: root.appendingPathComponent(
-                "andreavolpato-spektrafilm/ModelData/Spatial.metalSource"), encoding: .utf8)
+                "andreavolpato-spektrafilm/Resources/ModelData/Spatial.metalSource"), encoding: .utf8)
         let gpu = try MetalSpatial(source: source)
         let fixture = try JSONDecoder().decode(
             Fixture.self,

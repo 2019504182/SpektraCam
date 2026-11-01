@@ -5,7 +5,7 @@ import Metal
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let source = try String(
-            contentsOf: root.appendingPathComponent("andreavolpato-spektrafilm/ModelData/Grain.metalSource"),
+            contentsOf: root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData/Grain.metalSource"),
             encoding: .utf8)
         // Independent official vectors anchor the integer RNG before testing its distributions.
         let device = MTLCreateSystemDefaultDevice()!
