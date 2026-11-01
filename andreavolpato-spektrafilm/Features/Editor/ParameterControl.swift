@@ -5,9 +5,7 @@ import UIKit
 struct ParameterControl: View {
     let definition: ParameterDefinition
     let session: EditorSession
-    private var boundedScatter: Bool {
-        session.recipe.look.mode == .lut && definition.id == "film_render.halation.scatter_amount"
-    }
+    private var isScatterMix: Bool { definition.id == "film_render.halation.scatter_amount" }
 
     var body: some View {
         if definition.defaultFlag != nil {
@@ -37,18 +35,24 @@ struct ParameterControl: View {
             .accessibilityIdentifier(definition.id)
         } else {
             NumericControl(
-                title: definition.title,
+                title: isScatterMix ? "Scatter mix" : definition.title,
                 value: Binding(
                     get: {
                         let value = session.recipe.number(definition.id)
-                        return boundedScatter ? min(max(value, 0), 1) : value
+                        return isScatterMix ? min(max(value, 0), 1) * 100 : value
                     },
-                    set: { value in session.update(key: definition.id) { $0.numbers[definition.id] = value } }
+                    set: { value in
+                        session.update(key: definition.id) {
+                            $0.numbers[definition.id] = isScatterMix ? value / 100 : value
+                        }
+                    }
                 ),
-                range: boundedScatter ? 0...1 : definition.sliderRange, step: definition.step,
-                minimum: definition.minimum, maximum: boundedScatter ? 1 : definition.maximum,
-                unit: definition.unit, identifier: definition.id,
-                defaultValue: session.recipe.defaultNumber(definition.id),
+                range: isScatterMix ? 0...100 : definition.sliderRange,
+                step: isScatterMix ? 1 : definition.step,
+                minimum: definition.minimum, maximum: isScatterMix ? 100 : definition.maximum,
+                unit: isScatterMix ? "%" : definition.unit, identifier: definition.id,
+                defaultValue: session.recipe.defaultNumber(definition.id) * (isScatterMix ? 100 : 1),
+                fillOrigin: isScatterMix || definition.id == "film_render.halation.halation_amount" ? 0 : nil,
                 onEditingChanged: { session.setInteraction(key: definition.id, active: $0) })
         }
     }
@@ -336,6 +340,7 @@ struct EffectSection: View {
     let prominent: [String]
     let session: EditorSession
     var printOnly = false
+    var showsDetails = true
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(
@@ -349,16 +354,27 @@ struct EffectSection: View {
             .accessibilityIdentifier(prefix + ".active")
             VStack(alignment: .leading, spacing: 12) {
                 ParameterFields(session: session, prefix: prefix, names: prominent)
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ParameterFields(session: session, prefix: prefix, excluding: ["active"] + prominent)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
-                } label: {
-                    Text("Details").accessibilityIdentifier(prefix + ".details")
+                if showsDetails {
+                    EffectDetails(prefix: prefix, prominent: prominent, session: session)
                 }
             }.disabled(!session.recipe.flag(prefix + ".active"))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(printOnly && session.recipe.bypassesPrint)
+    }
+}
+
+struct EffectDetails: View {
+    let prefix: String
+    let prominent: [String]
+    let session: EditorSession
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 16) {
+                ParameterFields(session: session, prefix: prefix, excluding: ["active"] + prominent)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
+        } label: {
+            Text("Details").accessibilityIdentifier(prefix + ".details")
+        }.disabled(!session.recipe.flag(prefix + ".active"))
     }
 }

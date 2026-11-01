@@ -49,5 +49,54 @@ private func linear(_ x: Float) -> Double {
                 "PASS: monochrome grain preserves linear chroma; direct scan \(direct), max chroma residual \(largestChroma)"
             )
         }
+        let edgeWidth = 384
+        let edgeHeight = 192
+        for peak: Float in [1, 4] {
+            var pixels = Array(repeating: SIMD4<Float>(0.02, 0.02, 0.02, 1), count: edgeWidth * edgeHeight)
+            for y in 0..<edgeHeight {
+                for x in edgeWidth / 2..<edgeWidth {
+                    pixels[y * edgeWidth + x] = .init(peak, peak, peak, 1)
+                }
+            }
+            var recipe = EditRecipe()
+            for key in [
+                "camera.auto_exposure", "film_render.halation.active", "camera.diffusion_filter.active",
+                "enlarger.diffusion_filter.active", "print_render.glare.active",
+            ] { recipe.flags[key] = false }
+            recipe.numbers["film_render.grain.blur"] = 3
+            recipe.numbers["film_render.grain.particle_area_um2"] = 10
+            let pipeline = try FilmPipeline(library: library, recipe: recipe)
+            let oldNoisy = try await gpu.processImage(
+                pixels, width: edgeWidth, height: edgeHeight,
+                pipeline: pipeline, autoExposureEV: 0)
+            let oldMean = try await gpu.processImage(
+                pixels, width: edgeWidth, height: edgeHeight,
+                pipeline: pipeline, autoExposureEV: 0, grainMean: true)
+            let restored = try await gpu.processGrainPair(
+                pixels, width: edgeWidth, height: edgeHeight,
+                pipeline: pipeline, autoExposureEV: 0)
+            let oldA = try PhotoColorBridge.decode(oldNoisy)
+            let oldB = try PhotoColorBridge.decode(oldMean)
+            let newA = try PhotoColorBridge.decode(restored.0)
+            let newB = try PhotoColorBridge.decode(restored.1)
+            var before: Float = 0
+            var after: Float = 0
+            var count: Float = 0
+            for y in 8..<edgeHeight - 8 {
+                for x in edgeWidth / 2..<edgeWidth / 2 + 8 {
+                    let i = y * edgeWidth + x
+                    before +=
+                        abs(oldA[i].x - oldB[i].x) + abs(oldA[i].y - oldB[i].y) + abs(oldA[i].z - oldB[i].z)
+                    after +=
+                        abs(newA[i].x - newB[i].x) + abs(newA[i].y - newB[i].y) + abs(newA[i].z - newB[i].z)
+                    count += 3
+                }
+            }
+            print(
+                "Grain highlight edge, peak", peak, "old mean", before / count, "restored mean", after / count
+            )
+            precondition(
+                after < before * 0.8, "Density restoration did not reduce highlight-edge grain artifacts")
+        }
     }
 }

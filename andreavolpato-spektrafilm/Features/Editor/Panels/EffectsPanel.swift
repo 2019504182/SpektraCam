@@ -13,12 +13,14 @@ struct EffectsPanel: View {
             case .grain:
                 EffectSection(
                     title: "Grain", prefix: "film_render.grain",
-                    prominent: ["particle_area_um2", "blur"], session: session)
+                    prominent: ["particle_area_um2", "blur"], session: session, showsDetails: false)
                 Toggle("B&W Grain", isOn: session.binding(\.monochromeGrain, key: "grain.monochrome"))
                     .disabled(!session.recipe.flag("film_render.grain.active"))
                     .accessibilityIdentifier("grain.monochrome")
                 Button("Use Stock Grain", systemImage: "arrow.counterclockwise", action: session.resetGrain)
                     .foregroundStyle(.primary).accessibilityIdentifier("grain.stockDefaults")
+                EffectDetails(
+                    prefix: "film_render.grain", prominent: ["particle_area_um2", "blur"], session: session)
             case .halation:
                 EffectSection(
                     title: "Halation & scatter", prefix: "film_render.halation",

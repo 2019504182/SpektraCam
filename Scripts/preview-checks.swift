@@ -63,6 +63,48 @@ import ImageIO
         )
         try await checkLUTRendering(directory: data)
         try await checkLUTEdges(directory: data)
+        try await checkOpticalParity(directory: data)
+    }
+
+    private static func checkOpticalParity(directory: URL) async throws {
+        let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
+            try String(contentsOf: directory.appendingPathComponent($0 + ".metalSource"), encoding: .utf8)
+        }
+        let gpu = try MetalFilmPipeline(sources: sources)
+        let library = try ModelLibrary(directory: directory)
+        let width = 1080
+        let height = 48
+        let pixels = (0..<width * height).map { i -> SIMD4<Float> in
+            let x = i % width
+            return x < 400 || x > 850 ? .init(0, 0, 0, 1) : .init(16, 8, 4, 1)
+        }
+        let input = try SpatialCore.Image(
+            width: width, height: height,
+            pixels: pixels.map { SIMD3<Double>(Double($0.x), Double($0.y), Double($0.z)) })
+        for scale in [1.0, 3.0, 10.0] {
+            var recipe = EditRecipe()
+            recipe.flags["camera.diffusion_filter.active"] = false
+            recipe.flags["enlarger.diffusion_filter.active"] = false
+            recipe.numbers["film_render.halation.scatter_spatial_scale"] = scale
+            recipe.numbers["film_render.halation.halation_amount"] = 20
+            let model = try FilmPipeline(library: library, recipe: recipe)
+            let expected = try HalationCore.apply(
+                input, parameters: model.halation,
+                pixelSizeMicrometers: recipe.number("camera.film_format_mm") * 1000 / Double(width))
+            let result = try PhotoColorBridge.decode(
+                await gpu.processOptics(pixels, width: width, height: height, pipeline: model))
+            var maximum: Double = 0
+            for i in result.indices {
+                for ch in 0..<3 {
+                    maximum = max(maximum, abs(Double(result[i][ch]) - expected.pixels[i][ch]))
+                    precondition(
+                        result[i][ch] >= -0.0001 && result[i][ch] <= pixels[500][ch] + 0.0001,
+                        "Scatter generated negative light or an edge overshoot")
+                }
+            }
+            precondition(maximum < 0.0001, "Optical scatter/halation differs from the native reference")
+            print("PASS: HDR edge optical parity, scatter scale", scale, "halation 20×, max error", maximum)
+        }
     }
 
     private static func checkLUTEdges(directory: URL) async throws {
@@ -112,6 +154,16 @@ import ImageIO
         print(
             "PASS: LUT sharp-edge preservation, noise-only Grain Blur (mean error", smoothError,
             "vs", sharpError, "), red-weighted halation and unchanged distant background")
+        for mode in EditRecipe.LookMode.allCases {
+            recipe.look.mode = mode
+            recipe.numbers["film_render.halation.scatter_spatial_scale"] = 10
+            recipe.numbers["film_render.halation.scatter_amount"] = 1
+            let physical = try PhotoColorBridge.decode(await worker.render(recipe))
+            recipe.numbers["film_render.halation.scatter_amount"] = 3
+            let extrapolated = try PhotoColorBridge.decode(await worker.render(recipe))
+            precondition(physical == extrapolated, "Saved scatter overdrive generated invalid edge light")
+        }
+        print("PASS: both look modes bound saved scatter values to a physical light mixture")
     }
 
     private static func checkLUTRendering(directory: URL) async throws {

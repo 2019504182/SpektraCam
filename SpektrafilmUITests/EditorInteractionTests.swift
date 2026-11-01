@@ -417,6 +417,16 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertNotEqual(areaValue.value as? String, stockArea)
         app.buttons["grain.stockDefaults"].tap()
         XCTAssertEqual(areaValue.value as? String, stockArea)
+        XCTAssertLessThan(
+            app.buttons["grain.stockDefaults"].frame.maxY,
+            app.buttons["film_render.grain.details"].frame.minY)
+        app.buttons["effects.section.halation"].tap()
+        let scatter = app.buttons["film_render.halation.scatter_amount.value"]
+        XCTAssertEqual(scatter.value as? String, "100 %")
+        let halation = app.sliders["film_render.halation.halation_amount"]
+        drag(halation, to: 0.8)
+        let amount = app.buttons["film_render.halation.halation_amount.value"].value as? String ?? ""
+        XCTAssertGreaterThan(Double(amount.split(separator: " ").first ?? "0") ?? 0, 5)
         app.buttons["effects.section.diffusion"].tap()
         for key in ["camera.diffusion_filter.active", "enlarger.diffusion_filter.active"] {
             let toggle = app.descendants(matching: .any).matching(identifier: key).firstMatch

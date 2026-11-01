@@ -76,7 +76,7 @@ actor LibraryFiles {
     }
     private func cacheURL(_ photo: LibraryPhoto, thumbnail: Bool) -> URL {
         // Render changes must rebuild saved previews even when the edit recipe is unchanged.
-        let revision = photo.hasEdits ? "v4-" : ""
+        let revision = photo.hasEdits ? "v5-" : ""
         return cache.appendingPathComponent(photo.id.uuidString)
             .appendingPathComponent(revision + photo.renderKey + (thumbnail ? "-thumb.jpg" : "-preview.jpg"))
     }

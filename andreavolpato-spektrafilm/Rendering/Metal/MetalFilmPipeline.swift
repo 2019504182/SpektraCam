@@ -41,7 +41,7 @@ actor MetalFilmPipeline {
         diffusion = try .init(device: device, library: library)
     }
     private struct BufferFrame {
-        let image: MTLBuffer, wallSeconds: Double, gpuSeconds: Double?
+        let image: MTLBuffer, companion: MTLBuffer?, wallSeconds: Double, gpuSeconds: Double?
     }
     func releaseWorkingCaches() { diffusion.clear() }
 
@@ -76,6 +76,28 @@ actor MetalFilmPipeline {
         return try PhotoColorBridge.workingImage(data, width: width, height: height)
     }
 
+    /// Blur the stochastic density difference, then restore the unblurred density before printing.
+    /// Evaluating noise around a blurred highlight edge otherwise creates a dark fringe.
+    func processGrainPair(
+        _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline,
+        autoExposureEV: Double
+    ) async throws -> (CGImage, CGImage) {
+        let mean = try await renderBuffer(
+            input, width: width, height: height, pipeline: pipeline,
+            autoExposureEV: autoExposureEV, grainMean: true, grainDensityOnly: true)
+        let noisy = try await renderBuffer(
+            input, width: width, height: height, pipeline: pipeline,
+            autoExposureEV: autoExposureEV, grainNoiseReference: mean.image)
+        guard let clean = noisy.companion else { throw Failure.invalidShape }
+        func image(_ owned: MTLBuffer) throws -> CGImage {
+            let data = Data(
+                bytesNoCopy: owned.contents(), count: width * height * 16,
+                deallocator: .custom { [owned] _, _ in withExtendedLifetime(owned) {} })
+            return try PhotoColorBridge.workingImage(data, width: width, height: height)
+        }
+        return try (image(noisy.image), image(clean))
+    }
+
     /// Reuse the verified optical kernels in linear RGB, without the film/print color transform.
     func processOptics(_ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline) async throws
         -> CGImage
@@ -92,7 +114,8 @@ actor MetalFilmPipeline {
 
     private func renderBuffer(
         _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline, stochastic: Bool = true,
-        seed: UInt64 = 0, autoExposureEV: Double? = nil, opticsOnly: Bool = false, grainMean: Bool = false
+        seed: UInt64 = 0, autoExposureEV: Double? = nil, opticsOnly: Bool = false, grainMean: Bool = false,
+        grainDensityOnly: Bool = false, grainNoiseReference: MTLBuffer? = nil
     ) async throws -> BufferFrame {
         let started = ProcessInfo.processInfo.systemUptime
         let count = width * height
@@ -206,7 +229,9 @@ actor MetalFilmPipeline {
             dispatch(e, "random_lognormal_image")
             return output
         }
-        func finish(_ result: MTLBuffer, invalid: MTLBuffer) async throws -> BufferFrame {
+        func finish(_ result: MTLBuffer, invalid: MTLBuffer, companion: MTLBuffer? = nil) async throws
+            -> BufferFrame
+        {
             try Task.checkCancellation()
             let tail = command.rootCommandBuffer
             submitted = true
@@ -230,7 +255,8 @@ actor MetalFilmPipeline {
             try Task.checkCancellation()
             guard invalid.contents().load(as: UInt32.self) == 0 else { throw Failure.nonfinite }
             return BufferFrame(
-                image: result, wallSeconds: ProcessInfo.processInfo.systemUptime - started,
+                image: result, companion: companion,
+                wallSeconds: ProcessInfo.processInfo.systemUptime - started,
                 gpuSeconds: tail === originalCommand ? max(0, tail.gpuEndTime - tail.gpuStartTime) : nil)
         }
         // App RAW controls run before optical diffusion, emulsion exposure and development.
@@ -362,7 +388,7 @@ actor MetalFilmPipeline {
         pool.release(inhibition)
         let grain = pipeline.grain
         var cleanGrain: MTLBuffer?
-        if stochastic && grain.active && recipe.monochromeGrain {
+        if stochastic && grain.active && (recipe.monochromeGrain || grainNoiseReference != nil) {
             let clean = try pool.take()
             try mix(density, density, into: clean, aWeight: RGB(repeating: 1), bWeight: .zero)
             cleanGrain = clean
@@ -462,6 +488,21 @@ actor MetalFilmPipeline {
                 density = next
             }
         }
+        if grainDensityOnly {
+            let invalid = try allocate(4)
+            guard let clear = command.makeBlitCommandEncoder() else { throw Failure.allocation }
+            clear.fill(buffer: invalid, range: 0..<4, value: 0)
+            clear.endEncoding()
+            let encoder = try encoder("finish_linear_image", [density, invalid])
+            var n = UInt32(count)
+            encoder.setBytes(&n, length: 4, index: 2)
+            dispatch(encoder, "finish_linear_image")
+            return try await finish(density, invalid: invalid)
+        }
+        if let mean = grainNoiseReference, let clean = cleanGrain {
+            try mix(density, mean, into: density, aWeight: RGB(repeating: 1), bWeight: RGB(repeating: -1))
+            try mix(clean, density, into: density, aWeight: RGB(repeating: 1), bWeight: RGB(repeating: 1))
+        }
         // Both branches share decoding, exposure, halation, development and couplers.
         // Only the print/scan tail repeats when monochrome grain is enabled.
         func finishScan(_ input: MTLBuffer) throws -> MTLBuffer {
@@ -524,6 +565,11 @@ actor MetalFilmPipeline {
         guard let initialize = command.makeBlitCommandEncoder() else { throw Failure.allocation }
         initialize.fill(buffer: invalid, range: 0..<4, value: 0)
         initialize.endEncoding()
+        if grainNoiseReference != nil, let clean = cleanGrain {
+            try node("encode_image_srgb", density, density, [invalid])
+            try node("encode_image_srgb", clean, clean, [invalid])
+            return try await finish(density, invalid: invalid, companion: clean)
+        }
         if let clean = cleanGrain {
             let e = try encoder("encode_monochrome_grain", [density, clean, uniformBuffer, invalid])
             var n = UInt32(count)

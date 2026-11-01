@@ -32,8 +32,13 @@ Use LUTs made for encoded sRGB photos. Log and HDR input transforms are not supp
 The library LUT Manager shares import, rename and batch deletion with the editor picker.
 LUTs used by saved edits or Undo cannot be deleted.
 LUT mode skips film/print color. Halation and diffusion act on linear RGB before the LUTs.
-A Portra 400 grain noise layer follows the LUTs. Grain Blur smooths the noise without blurring photo edges.
+A Portra 400 grain noise layer follows the LUTs.
+It restores the sharp density image before print/scan conversion to reduce false grain at highlight edges.
 These effects are an RGB adaptation. They do not form a full spectral emulsion model.
+
+Halation Amount ranges from 0 to 20×. The stock default remains 1×.
+Scatter is a 0–100% light mixture, with a default of 100%.
+Physical effect radii use micrometres. Grain Blur uses working-image pixels, as in the pinned source.
 
 Exposure, S-curve, pivot, highlights, shadows, white balance and saturation precede Develop.
 Processing keeps floating-point headroom until the final SDR conversion.

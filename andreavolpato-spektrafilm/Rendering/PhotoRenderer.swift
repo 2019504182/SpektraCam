@@ -183,13 +183,9 @@ actor PhotoRenderer {
         } else {
             let exposure = try exposure(grain, library: library)
             let pipeline = try FilmPipeline(library: library, recipe: grain)
-            let noisy = try await gpu.processImage(
+            noise = try await gpu.processGrainPair(
                 input.pixels, width: input.width, height: input.height,
                 pipeline: pipeline, autoExposureEV: exposure)
-            let mean = try await gpu.processImage(
-                input.pixels, width: input.width, height: input.height,
-                pipeline: pipeline, autoExposureEV: exposure, grainMean: true)
-            noise = (noisy, mean)
             if preview {
                 grainKey = grain
                 grainSize = size
@@ -203,6 +199,9 @@ actor PhotoRenderer {
         _ input: SourceImageRenderer.Input, recipe: EditRecipe,
         library: ModelLibrary, gpu: MetalFilmPipeline, preview: Bool
     ) async throws -> CGImage {
+        var recipe = recipe
+        recipe.numbers["film_render.halation.scatter_amount"] = min(
+            max(recipe.number("film_render.halation.scatter_amount"), 0), 1)
         if recipe.look.mode == .lut {
             let frames = try await effectFrames(
                 input, recipe: recipe, library: library, gpu: gpu, preview: preview)
