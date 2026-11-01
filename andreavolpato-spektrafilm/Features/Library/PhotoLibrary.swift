@@ -126,6 +126,24 @@ import SwiftData
         for recipe in pending.values { ids.formUnion(recipe.look.identifiers) }
         return ids
     }
+    /// Repair old iOS RAW index entries without decoding pixels or changing originals/edits.
+    func repairRAWDimensions() async throws {
+        for photo in photos where photo.isRAW && max(photo.metadata.width, photo.metadata.height) <= 1080 {
+            try Task.checkCancellation()
+            guard let size = await files.nativeRAWSize(photo), size.width > 0, size.height > 0,
+                let record = records[photo.id]
+            else { continue }
+            var metadata = photo.metadata
+            metadata.width = Int(size.width)
+            metadata.height = Int(size.height)
+            guard metadata != photo.metadata else { continue }
+            record.metadataData = try JSONEncoder().encode(metadata)
+            try context.save()
+            if let index = photos.firstIndex(where: { $0.id == photo.id }) {
+                photos[index] = try record.snapshot()
+            }
+        }
+    }
     func queueRecipe(_ recipe: EditRecipe, for id: UUID, immediate: Bool = false) {
         guard records[id] != nil else { return }
         pending[id] = recipe

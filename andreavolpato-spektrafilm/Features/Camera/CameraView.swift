@@ -2,11 +2,16 @@ import SwiftUI
 
 struct CameraView: View {
     @State private var model: CameraModel
-    @State private var showLibrary = false
+    let onLibrary: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
-    init(library: PhotoLibrary) { _model = State(initialValue: CameraModel(library: library)) }
+    private let cameraButtonSize: CGFloat = 44
+    private let bubbleDiameter: CGFloat = 36
+    init(library: PhotoLibrary, onLibrary: @escaping () -> Void) {
+        _model = State(initialValue: CameraModel(library: library))
+        self.onLibrary = onLibrary
+    }
     var body: some View {
         NavigationStack {
             ZStack {
@@ -46,20 +51,37 @@ struct CameraView: View {
                             }
                         }.padding().glassEffect(in: .rect(cornerRadius: 20))
                     }
-                    HStack {
-                        Button {
-                            showLibrary = true
-                        } label: {
-                            if let photo = model.library.photos.last {
-                                PhotoThumbnail(photo: photo, images: model.library.images, showsBadges: false)
-                                    .frame(width: 44, height: 44).clipShape(.circle)
-                            } else {
-                                Image(systemName: "photo.on.rectangle").frame(width: 44, height: 44)
+                    ZStack {
+                        HStack {
+                            Button {
+                                onLibrary()
+                            } label: {
+                                if let photo = model.library.photos.last {
+                                    PhotoThumbnail(
+                                        photo: photo, images: model.library.images, showsBadges: false
+                                    )
+                                    .frame(width: cameraButtonSize, height: cameraButtonSize).clipShape(
+                                        .circle)
+                                } else {
+                                    Image(systemName: "photo.on.rectangle").frame(
+                                        width: cameraButtonSize, height: cameraButtonSize)
+                                }
                             }
+                            .buttonStyle(.glass).buttonBorderShape(.circle).disabled(model.busy)
+                            .accessibilityLabel("Open Library").accessibilityIdentifier("camera.library")
+                            Spacer()
+                            Button {
+                                Task { await model.flip() }
+                            } label: {
+                                cameraBubble(
+                                    Image(systemName: "arrow.triangle.2.circlepath.camera").font(
+                                        .system(size: 16)))
+                            }
+                            .labelStyle(.iconOnly).buttonStyle(.plain)
+                            .accessibilityLabel("Flip Camera")
+                            .disabled(model.busy || !model.lenses.contains(where: \.front))
+                            .accessibilityIdentifier("camera.flip")
                         }
-                        .buttonStyle(.glass).buttonBorderShape(.circle).disabled(model.busy)
-                        .accessibilityLabel("Open Library").accessibilityIdentifier("camera.library")
-                        Spacer()
                         Button {
                             Task { await model.takePhoto() }
                         } label: {
@@ -70,14 +92,6 @@ struct CameraView: View {
                         .disabled(!model.canCapture)
                         .accessibilityLabel("Take RAW Photo").accessibilityIdentifier("camera.shutter")
                         .overlay { if model.busy { ProgressView().allowsHitTesting(false) } }
-                        Spacer()
-                        Button("Front Camera", systemImage: "arrow.triangle.2.circlepath.camera") {
-                            Task { await model.flip() }
-                        }
-                        .labelStyle(.iconOnly).buttonStyle(.glass).buttonBorderShape(.circle)
-                        .frame(width: 60, height: 60)
-                        .disabled(model.busy || !model.lenses.contains(where: \.front))
-                        .accessibilityIdentifier("camera.flip")
                     }
                     Text(
                         model.savedCount > 0
@@ -88,31 +102,39 @@ struct CameraView: View {
                 }.padding(.horizontal).padding(.bottom, 12)
             }
         }
-        .sheet(isPresented: $showLibrary) {
-            LibraryView(library: model.library, onClose: { showLibrary = false })
-                .environment(\.openCamera, { showLibrary = false })
-                .presentationDetents([.large])
-        }
-        .onChange(of: showLibrary) { _, shown in
-            Task { await model.setActive(!shown && scenePhase == .active) }
-        }
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(model.busy)
         .task {
             await model.retryImport()
-            await model.setActive(scenePhase == .active && !showLibrary)
+            await model.setActive(scenePhase != .background)
             await model.monitor()
         }
         .onChange(of: scenePhase) { _, phase in
-            Task { await model.setActive(phase == .active && !showLibrary) }
+            // Permission prompts and transient overlays make the scene inactive. Only background
+            // transitions stop capture; AVFoundation reports hardware interruptions separately.
+            if phase != .inactive { Task { await model.setActive(phase == .active) } }
         }
         .onDisappear { Task { await model.close() } }
     }
     @ViewBuilder private var formatControl: some View {
-        if model.formats.count > 1 {
+        if !model.formats.isEmpty {
             Menu {
-                Picker("RAW Format", selection: $model.format) {
-                    ForEach(model.formats) { Text($0.title).tag($0) }
+                if model.formats.count > 1 {
+                    Picker("RAW Format", selection: $model.format) {
+                        ForEach(model.formats) { Text($0.title).tag($0) }
+                    }
+                }
+                if model.maximumMegapixels > 12 {
+                    Picker(
+                        "Resolution",
+                        selection: Binding(
+                            get: { model.highResolution },
+                            set: { value in Task { await model.setHighResolution(value) } }
+                        )
+                    ) {
+                        Text("12 MP").tag(false)
+                        Text("Max (\(model.maximumMegapixels) MP)").tag(true)
+                    }
                 }
             } label: {
                 Text("DNG").font(.caption.weight(.semibold))
@@ -125,31 +147,43 @@ struct CameraView: View {
     }
     private var lensControls: some View {
         GlassEffectContainer(spacing: 8) {
-            HStack {
+            ZStack(alignment: .leading) {
                 if model.selectedLens?.front != true && model.lenses.contains(where: \.macro) {
-                    Button("Macro", systemImage: "camera.macro") { Task { await model.toggleMacro() } }
-                        .labelStyle(.iconOnly).buttonStyle(.glass).buttonBorderShape(.circle)
-                        .tint(model.macro ? Color.accentColor : .primary)
-                        .accessibilityAddTraits(model.macro ? .isSelected : [])
-                        .accessibilityIdentifier("camera.macro")
-                }
-                Spacer(minLength: 8)
-                HStack(spacing: 4) {
-                    ForEach(model.lenses.filter { $0.front == (model.selectedLens?.front == true) }) { lens in
-                        Button(lens.title) { Task { await model.selectLens(lens) } }
-                            .font(.caption.weight(.semibold)).monospacedDigit()
-                            .frame(minWidth: 44, minHeight: 44)
-                            .buttonStyle(.glass).buttonBorderShape(.circle)
-                            .tint(lens.id == model.selectedLens?.id ? Color.accentColor : .primary)
-                            .accessibilityAddTraits(lens.id == model.selectedLens?.id ? .isSelected : [])
-                            .accessibilityLabel(
-                                lens.front ? "Front camera" : "\(lens.millimeters) millimeter lens")
+                    Button {
+                        Task { await model.toggleMacro() }
+                    } label: {
+                        cameraBubble(Image(systemName: "camera.macro").font(.system(size: 16)))
                     }
+                    .labelStyle(.iconOnly).buttonStyle(.plain)
+                    .accessibilityLabel("Macro")
+                    .foregroundStyle(model.macro ? Color.accentColor : .primary)
+                    .accessibilityAddTraits(model.macro ? .isSelected : [])
+                    .accessibilityIdentifier("camera.macro")
                 }
-                Spacer(minLength: 8)
-                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
-            }.disabled(model.busy).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                HStack(spacing: 6) {
+                    ForEach(model.lenses.filter { !$0.front && model.selectedLens?.front != true }) { lens in
+                        Button {
+                            Task { await model.selectLens(lens) }
+                        } label: {
+                            cameraBubble(
+                                Text(lens.title).font(.system(size: 12, weight: .semibold)).monospacedDigit())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(lens.id == model.selectedLens?.id ? Color.accentColor : .primary)
+                        .accessibilityAddTraits(lens.id == model.selectedLens?.id ? .isSelected : [])
+                        .accessibilityIdentifier("camera.lens.\(lens.millimeters)")
+                        .accessibilityLabel(
+                            lens.front ? "Front camera" : "\(lens.millimeters) millimeter lens")
+                    }
+                }.frame(maxWidth: .infinity)
+            }.frame(height: cameraButtonSize).disabled(model.busy).dynamicTypeSize(
+                ...DynamicTypeSize.xxxLarge)
         }
+    }
+    private func cameraBubble<Content: View>(_ content: Content) -> some View {
+        content.frame(width: bubbleDiameter, height: bubbleDiameter)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .frame(width: cameraButtonSize, height: cameraButtonSize).contentShape(.circle)
     }
     @ViewBuilder private var status: some View {
         switch model.state {
@@ -174,7 +208,7 @@ struct CameraView: View {
         case .paused:
             ContentUnavailableView(
                 "Camera Paused", systemImage: "camera",
-                description: Text("The camera will resume when it is available."))
+                description: Text(model.pauseReason ?? "The camera will resume when it is available."))
         case .failed(let message):
             ContentUnavailableView {
                 Label("Camera Stopped", systemImage: "camera")

@@ -159,6 +159,30 @@ import UniformTypeIdentifiers
             precondition(LibraryFilter.raw.includes(imported) == raw)
             let copy = try Data(contentsOf: library!.files.sourceURL(imported))
             precondition(copy == bytes)
+            if raw {
+                let dimensions = try PhotoExporter.sourceDimensions(bytes)
+                precondition(
+                    imported.metadata.width == Int(dimensions.width)
+                        && imported.metadata.height == Int(dimensions.height),
+                    "Library RAW size came from its embedded preview")
+                let repairRoot = temporary.appendingPathComponent(UUID().uuidString)
+                let repairCache = temporary.appendingPathComponent(UUID().uuidString)
+                let old = try await makeLegacyStore(
+                    root: repairRoot, cache: repairCache, source: url,
+                    recipe: recipe, legacyPreviewSize: true)
+                let repaired = try PhotoLibrary(
+                    root: repairRoot, cache: repairCache, modelDirectory: dataDirectory)
+                precondition(repaired.photo(old.id)!.metadata.width == 1080)
+                try await repaired.repairRAWDimensions()
+                precondition(
+                    repaired.photo(old.id)!.metadata == imported.metadata,
+                    "RAW metadata repair lost other tags")
+                let retainedRecipe = try repaired.recipe(old.id)
+                precondition(retainedRecipe == recipe, "RAW size repair changed edits")
+                print(
+                    "PASS: native RAW library size and repair of old preview-sized metadata; original and edits preserved"
+                )
+            }
             try await library!.delete([imported.id])
             let after = try Data(contentsOf: url)
             precondition(after == bytes)
@@ -240,7 +264,10 @@ import UniformTypeIdentifiers
             "PASS: import bytes, capture date/GPS, RAW classification, duplicate preservation, recipe restart, interrupted-delete recovery, cache rebuild, date fallback, original export and app-only deletion"
         )
     }
-    @MainActor private static func makeLegacyStore(root: URL, cache: URL, source: URL, recipe: EditRecipe)
+    @MainActor private static func makeLegacyStore(
+        root: URL, cache: URL, source: URL, recipe: EditRecipe,
+        legacyPreviewSize: Bool = false
+    )
         async throws -> LibraryPhoto
     {
         let files = try LibraryFiles(root: root, cache: cache, validIDs: [])
@@ -252,6 +279,12 @@ import UniformTypeIdentifiers
         let container = try ModelContainer(for: schema, configurations: [config])
         let context = ModelContext(container)
         let record = try LibrarySchemaV1.Record(photo)
+        if legacyPreviewSize {
+            var metadata = photo.metadata
+            metadata.width = 1080
+            metadata.height = 810
+            record.metadataData = try JSONEncoder().encode(metadata)
+        }
         record.recipeData = try LibraryPhoto.recipeData(recipe)
         record.renderKey = LibraryPhoto.key(record.recipeData!)
         context.insert(record)

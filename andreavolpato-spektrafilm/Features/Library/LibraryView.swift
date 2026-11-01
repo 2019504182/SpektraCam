@@ -5,8 +5,7 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     let library: PhotoLibrary
-    var onClose: (() -> Void)? = nil
-    @State private var path: [UUID] = []
+    @Binding var path: [UUID]
     @State private var filter = LibraryFilter.all
     @State private var selecting = false
     @State private var selection: Set<UUID> = []
@@ -49,14 +48,7 @@ struct LibraryView: View {
                 .navigationTitle("Library").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        if let onClose {
-                            Button("Close Library", systemImage: "xmark", action: onClose).buttonBorderShape(
-                                .circle
-                            )
-                            .accessibilityIdentifier("camera.library.close")
-                        } else {
-                            CameraButton()
-                        }
+                        CameraButton()
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {

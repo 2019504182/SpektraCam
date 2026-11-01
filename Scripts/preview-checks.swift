@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 
@@ -64,6 +65,71 @@ import ImageIO
         try await checkLUTRendering(directory: data)
         try await checkLUTEdges(directory: data)
         try await checkOpticalParity(directory: data)
+        for path in CommandLine.arguments.dropFirst(2)
+        where URL(fileURLWithPath: path).pathExtension.lowercased() == "dng" {
+            try await checkRAWLook(directory: data, url: URL(fileURLWithPath: path))
+        }
+    }
+
+    private static func checkRAWLook(directory: URL, url: URL) async throws {
+        let data = try Data(contentsOf: url)
+        let raw = CIRAWFilter(imageData: data, identifierHint: nil)!
+        let dimensions = try PhotoExporter.sourceDimensions(data)
+        precondition(dimensions == raw.nativeSize, "Export dimensions came from the RAW preview")
+        let original = try PhotoExporter.decodeSource(data)
+        precondition(
+            max(original.width, original.height) == Int(max(raw.nativeSize.width, raw.nativeSize.height)),
+            "Untouched RAW export decoded only the embedded preview")
+        let source = CGImageSourceCreateWithData(data as CFData, nil)!
+        let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+            source, 0,
+            [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 384,
+            ] as CFDictionary)!
+        func renderer() -> PhotoRenderer {
+            PhotoRenderer(
+                source: thumbnail, directory: directory, data: data,
+                temperature: Double(raw.neutralTemperature), previewMaximum: 384)
+        }
+        let worker = renderer()
+        var recipe = EditRecipe()
+        recipe.temperature = Double(raw.neutralTemperature)
+        for flag in [
+            "film_render.grain.active", "film_render.halation.active",
+            "camera.diffusion_filter.active", "enlarger.diffusion_filter.active",
+        ] { recipe.flags[flag] = false }
+        let film = try PhotoColorBridge.decode(await worker.render(recipe))
+        recipe.look.mode = .lut
+        let lut = try PhotoColorBridge.decode(await worker.render(recipe))
+        let freshLUT = try PhotoColorBridge.decode(await renderer().render(recipe))
+        precondition(lut == freshLUT, "RAW mode change reused scene-linear input for a photo LUT")
+        recipe.look.mode = .spektrafilm
+        let filmAgain = try PhotoColorBridge.decode(await worker.render(recipe))
+        precondition(film == filmAgain, "RAW mode change changed the film input or metering")
+        recipe.look.mode = .lut
+        let lutAgain = try PhotoColorBridge.decode(await worker.render(recipe))
+        precondition(lut == lutAgain, "RAW LUT input changed on a second mode switch")
+        let full: (URL, Int, Int)
+        do {
+            full = try await worker.export(recipe, size: .full, format: .jpeg, quality: 0.95)
+        } catch is RenderMemoryBudget.Failure {
+            #if targetEnvironment(simulator)
+                print(
+                    "PASS: genuine RAW mode cache isolation and native original decode; full GPU export blocked by Simulator memory budget"
+                )
+                return
+            #else
+                throw RenderMemoryBudget.Failure()
+            #endif
+        }
+        defer { try? FileManager.default.removeItem(at: full.0) }
+        precondition(
+            max(full.1, full.2) == Int(max(raw.nativeSize.width, raw.nativeSize.height)),
+            "RAW export used embedded preview dimensions")
+        print(
+            "PASS: genuine RAW film/LUT/film/LUT cache isolation; full-resolution LUT export", full.1, full.2)
     }
 
     private static func checkOpticalParity(directory: URL) async throws {
@@ -250,7 +316,8 @@ import ImageIO
         print(
             "PASS: LUT mode bypasses film color; RAW order, both slots, four effects, reset and PNG export agree"
         )
-        let files = CommandLine.arguments.dropFirst(2).prefix(2).map { URL(fileURLWithPath: $0) }
+        let files = CommandLine.arguments.dropFirst(2).map { URL(fileURLWithPath: $0) }
+            .filter { $0.pathExtension.lowercased() == "cube" }.prefix(2)
         if files.count == 2 {
             let installed = try files.map { file -> CubeLUT in
                 let data = try Data(contentsOf: file)

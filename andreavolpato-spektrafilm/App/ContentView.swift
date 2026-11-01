@@ -7,15 +7,28 @@ struct ContentView: View {
     @State private var library: PhotoLibrary?
     @State private var failure: String?
     @State private var showCamera = false
+    @State private var libraryPath: [UUID] = []
     @State private var captureImportFailure: String?
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         Group {
             if let library {
-                LibraryView(library: library)
+                LibraryView(library: library, path: $libraryPath)
                     .environment(\.openCamera, { showCamera = true })
-                    .fullScreenCover(isPresented: $showCamera) { CameraView(library: library) }
-                    .task { await recoverCaptures(library); try? await library.luts.load() }
+                    .fullScreenCover(isPresented: $showCamera) {
+                        CameraView(library: library) {
+                            do { try library.flushPending() } catch {
+                                library.saveFailure = error.localizedDescription
+                            }
+                            libraryPath.removeAll()
+                            showCamera = false
+                        }
+                    }
+                    .task {
+                        await recoverCaptures(library)
+                        try? await library.luts.load()
+                        try? await library.repairRAWDimensions()
+                    }
             } else if let failure {
                 ContentUnavailableView {
                     Label("Couldn’t open library", systemImage: "exclamationmark.triangle")

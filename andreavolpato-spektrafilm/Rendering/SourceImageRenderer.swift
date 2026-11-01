@@ -45,11 +45,16 @@ nonisolated enum SourceImageRenderer {
             rawInput = true
             raw.scaleFactor = Float(
                 min(1, Double(maximum) / max(raw.nativeSize.width, raw.nativeSize.height)))
-            // Scene-linear RAW avoids baking Apple's display tone mapping into the film model.
-            raw.baselineExposure = 0
-            raw.boostAmount = 0
-            raw.localToneMapAmount = 0
-            raw.isGamutMappingEnabled = false
+            // The film model needs scene light. Photo LUTs expect a rendered sRGB photograph:
+            // retain the decoder's per-file baseline and default look for that input contract.
+            // A fixed ProRAW EV offset cannot replace the DNG's image-specific rendering tags.
+            if recipe.look.mode == .spektrafilm {
+                raw.baselineExposure = 0
+                raw.shadowBias = 0
+                raw.boostAmount = 0
+                raw.localToneMapAmount = 0
+                raw.isGamutMappingEnabled = false
+            }
             raw.exposure = 0  // One linear EV operation is shared by preview and export below.
             if let temperature = recipe.temperature { raw.neutralTemperature = Float(temperature) }
             raw.neutralTint = min(max(raw.neutralTint + Float(recipe.source.tint), -150), 150)

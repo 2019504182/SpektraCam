@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -33,8 +34,36 @@ nonisolated enum PhotoExporter {
             }
         }
     }
+    static func sourceDimensions(_ data: Data) throws -> CGSize {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw Failure.decode }
+        if let type = CGImageSourceGetType(source), UTType(type as String)?.conforms(to: .rawImage) == true {
+            guard let raw = CIRAWFilter(imageData: data, identifierHint: type as String) else {
+                throw Failure.decode
+            }
+            return raw.nativeSize
+        }
+        guard let p = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = p[kCGImagePropertyPixelWidth] as? Int,
+            let height = p[kCGImagePropertyPixelHeight] as? Int
+        else { throw Failure.decode }
+        return CGSize(width: width, height: height)
+    }
     static func decodeSource(_ data: Data, maximum: Int? = nil) throws -> CGImage {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw Failure.decode }
+        if let type = CGImageSourceGetType(source), UTType(type as String)?.conforms(to: .rawImage) == true {
+            guard let raw = CIRAWFilter(imageData: data, identifierHint: type as String) else {
+                throw Failure.decode
+            }
+            raw.scaleFactor = Float(
+                min(1, Double(maximum ?? Int.max) / max(raw.nativeSize.width, raw.nativeSize.height)))
+            guard let image = raw.outputImage,
+                let space = CGColorSpace(name: CGColorSpace.sRGB),
+                let result = CIContext().createCGImage(
+                    image, from: image.extent, format: .RGBA8, colorSpace: space)
+            else { throw Failure.decode }
+            return result
+        }
+        guard
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
             let width = properties[kCGImagePropertyPixelWidth] as? Int,
             let height = properties[kCGImagePropertyPixelHeight] as? Int,

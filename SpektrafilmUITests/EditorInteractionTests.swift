@@ -23,12 +23,11 @@ final class EditorInteractionTests: XCTestCase {
         app.buttons["camera.open"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["camera.unavailable"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["camera.shutter"].isEnabled)
+        XCTAssertEqual(app.buttons["camera.shutter"].frame.midX, app.frame.midX, accuracy: 1,
+            "The camera shutter is not centered")
         app.buttons["camera.library"].tap()
-        XCTAssertTrue(app.buttons["camera.library.close"].waitForExistence(timeout: 5))
-        app.buttons["camera.library.close"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["camera.unavailable"].waitForExistence(timeout: 10))
-        app.buttons["camera.close"].tap()
         XCTAssertTrue(app.buttons["library.import"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["camera.close"].exists)
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'library.photo.'")).firstMatch.tap()
         XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 10))
         app.buttons["camera.open"].tap()
@@ -45,6 +44,16 @@ final class EditorInteractionTests: XCTestCase {
         app.buttons["camera.close"].tap()
         XCTAssertTrue(app.buttons["editor.back"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["editor.expand"].value as? String, "Expanded")
+    }
+    @MainActor func testCameraLibraryReturnsToRoot() {
+        let app = openPhoto()
+        app.buttons["camera.open"].tap()
+        XCTAssertTrue(app.buttons["camera.library"].waitForExistence(timeout: 10))
+        app.buttons["camera.library"].tap()
+        XCTAssertTrue(app.buttons["library.import"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["editor.back"].exists)
+        XCTAssertFalse(app.buttons["photo.develop"].exists)
+        XCTAssertFalse(app.buttons["camera.close"].exists)
     }
     @MainActor func testRevertSelectedPhoto() throws {
         let app = openPhoto()
@@ -88,6 +97,11 @@ final class EditorInteractionTests: XCTestCase {
         let zoomed = NSPredicate(format: "value != %@", "100 percent zoom")
         expectation(for: zoomed, evaluatedWith: photo)
         waitForExpectations(timeout: 10)
+        let compareZoom = photo.value as? String
+        app.buttons["editor.compare"].tap()
+        XCTAssertEqual(photo.value as? String, compareZoom, "Compare reset the zoom")
+        app.buttons["editor.compare"].tap()
+        XCTAssertEqual(photo.value as? String, compareZoom, "Returning to edits reset the zoom")
         let zoomImage = XCTAttachment(screenshot: app.screenshot())
         zoomImage.name = "Native double tap zoom"
         zoomImage.lifetime = .keepAlways
@@ -126,6 +140,32 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["photo.develop"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.sheets["Return to Photo?"].exists)
         XCTAssertFalse(app.buttons["editor.back"].exists)
+    }
+    @MainActor func testCompareKeepsCroppedZoom() {
+        let app = openPhoto()
+        app.buttons["editor.tool.crop"].tap()
+        app.buttons["crop.ratio.square"].tap()
+        app.buttons["editor.tool.adjust"].tap()
+        app.buttons["editor.tool.adjust"].tap()
+        let photo = app.images["Edited photo"]
+        let square = NSPredicate { _, _ in abs(photo.frame.width - photo.frame.height) < 2 }
+        expectation(for: square, evaluatedWith: photo)
+        waitForExpectations(timeout: 15)
+        photo.doubleTap()
+        let zoomed = NSPredicate(format: "value != %@", "100 percent zoom")
+        expectation(for: zoomed, evaluatedWith: photo)
+        waitForExpectations(timeout: 10)
+        let value = photo.value as? String
+        XCTAssertLessThan(photo.frame.minY, app.buttons["editor.info"].frame.maxY,
+            "Zoomed photo cannot extend behind the information panel")
+        app.buttons["editor.compare"].tap()
+        XCTAssertEqual(photo.value as? String, value, "Comparing an uncropped original reset zoom")
+        app.buttons["editor.compare"].tap()
+        XCTAssertEqual(photo.value as? String, value, "Returning to a crop reset zoom")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Cropped comparison preserves zoom behind glass"
+        capture.lifetime = .keepAlways
+        add(capture)
     }
     @MainActor private func importPhoto(count: Int = 1) -> XCUIApplication {
         continueAfterFailure = false

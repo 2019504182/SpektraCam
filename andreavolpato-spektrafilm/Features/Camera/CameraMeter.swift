@@ -22,6 +22,7 @@ nonisolated final class CameraMeter: NSObject, AVCaptureVideoDataOutputSampleBuf
     private let device: AVCaptureDevice
     private let publish: @Sendable (CameraReadings) -> Void
     private var lastUpdate = -Double.infinity
+    private let started = ProcessInfo.processInfo.systemUptime
     init(device: AVCaptureDevice, publish: @escaping @Sendable (CameraReadings) -> Void) {
         self.device = device
         self.publish = publish
@@ -31,6 +32,9 @@ nonisolated final class CameraMeter: NSObject, AVCaptureVideoDataOutputSampleBuf
         from connection: AVCaptureConnection
     ) {
         let now = ProcessInfo.processInfo.systemUptime
+        if lastUpdate == -.infinity {
+            print("Camera first preview frame: \(now - started) s")
+        }
         guard now - lastUpdate >= 0.2, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
             CVPixelBufferGetPlaneCount(buffer) >= 1
         else { return }

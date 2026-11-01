@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreTransferable
 import CryptoKit
 import Foundation
@@ -76,7 +77,7 @@ actor LibraryFiles {
     }
     private func cacheURL(_ photo: LibraryPhoto, thumbnail: Bool) -> URL {
         // Render changes must rebuild saved previews even when the edit recipe is unchanged.
-        let revision = photo.hasEdits ? "v5-" : ""
+        let revision = photo.hasEdits ? "v6-" : ""
         return cache.appendingPathComponent(photo.id.uuidString)
             .appendingPathComponent(revision + photo.renderKey + (thumbnail ? "-thumb.jpg" : "-preview.jpg"))
     }
@@ -89,9 +90,13 @@ actor LibraryFiles {
             let thumbnail = Self.thumbnail(source, maximum: ImportedPhoto.thumbnailMaximumPixelSize)
         else { throw Failure.image }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
-        let metadata = PhotoMetadata(properties: properties, type: type, image: thumbnail)
+        var metadata = PhotoMetadata(properties: properties, type: type, image: thumbnail)
         let identifier = type as String
         let uti = UTType(identifier)
+        if uti?.conforms(to: .rawImage) == true, let size = CIRAWFilter(imageURL: url)?.nativeSize {
+            metadata.width = Int(size.width)
+            metadata.height = Int(size.height)
+        }
         let ext = uti?.preferredFilenameExtension ?? "image"
         let hash = try Self.digest(url)
         let photo = LibraryPhoto(
@@ -135,6 +140,9 @@ actor LibraryFiles {
         let data = try Data(contentsOf: sourceURL(photo))
         guard let result = ImportedPhoto.decode(data, maximum: maximum) else { throw Failure.image }
         return result
+    }
+    func nativeRAWSize(_ photo: LibraryPhoto) -> CGSize? {
+        CIRAWFilter(imageURL: sourceURL(photo))?.nativeSize
     }
     /// A grid rebuild must never replace the independent 1080 px photo preview.
     @discardableResult func storeThumbnail(_ image: CGImage, photo: LibraryPhoto) throws -> CGImage {

@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
+import ImageIO
 
 nonisolated enum CameraFormat: String, CaseIterable, Identifiable, Sendable {
     case proRAW, bayerRAW
@@ -25,7 +26,8 @@ nonisolated enum CameraFailure: LocalizedError {
 actor CameraService {
     nonisolated enum Event: Sendable {
         case ready(Bool)
-        case interrupted, resumed
+        case interrupted(String)
+        case resumed
         case failed(String)
         case readings(CameraReadings)
     }
@@ -37,9 +39,11 @@ actor CameraService {
     private let meterQueue = DispatchQueue(label: "SpektraCam.CameraMeter", qos: .utility)
     private var meter: CameraMeter?
     private var devices: [String: AVCaptureDevice] = [:]
+    private var inputs: [String: AVCaptureDeviceInput] = [:]
     private var lenses: [CameraLens] = []
     private var activeLens: CameraLens?
     private var macro = false
+    private var highResolution = false
     private var source: CameraPreviewSource?
     private var formats: [CameraFormat: OSType] = [:]
     private var capture: RAWPhotoCapture?
@@ -59,6 +63,10 @@ actor CameraService {
         let lenses: [CameraLens]
         let selectedLens: CameraLens
         let macro: Bool
+        let highResolution: Bool
+        let maximumMegapixels: Int
+        let exposureBias: Double
+        let exposureRange: ClosedRange<Double>
     }
     func start() async throws -> Configuration {
         guard !closed else { throw CancellationError() }
@@ -79,10 +87,17 @@ actor CameraService {
         #endif
     }
     private func configuration() throws -> Configuration {
-        guard let source, let activeLens else { throw CameraFailure.configuration }
+        guard let source, let activeLens, let device = devices[activeLens.id] else {
+            throw CameraFailure.configuration
+        }
         return Configuration(
             source: source, formats: CameraFormat.allCases.filter { formats[$0] != nil },
-            lenses: lenses, selectedLens: activeLens, macro: macro)
+            lenses: lenses, selectedLens: activeLens, macro: macro, highResolution: highResolution,
+            maximumMegapixels: Int(
+                (Double(maximumDimensions().width) * Double(maximumDimensions().height) / 1_000_000).rounded()
+            ), exposureBias: Double(device.exposureTargetBias),
+            exposureRange: max(
+                -3, Double(device.minExposureTargetBias))...min(3, Double(device.maxExposureTargetBias)))
     }
     private func configure() throws {
         let discovered = AVCaptureDevice.DiscoverySession(
@@ -109,6 +124,7 @@ actor CameraService {
         for old in session.outputs { session.removeOutput(old) }
         session.sessionPreset = .photo
         let input = try AVCaptureDeviceInput(device: device)
+        inputs[device.uniqueID] = input
         guard session.canAddInput(input) else { throw CameraFailure.configuration }
         session.addInput(input)
         guard session.canAddOutput(output) else { throw CameraFailure.configuration }
@@ -137,12 +153,17 @@ actor CameraService {
             device.autoFocusRangeRestriction = macro ? .near : .none
         }
         device.unlockForConfiguration()
-        output.isAppleProRAWEnabled = output.isAppleProRAWSupported
+        let supportsProRAW = output.isAppleProRAWSupported
+        if output.isAppleProRAWEnabled != supportsProRAW { output.isAppleProRAWEnabled = supportsProRAW }
         output.maxPhotoQualityPrioritization = .quality
-        if let dimensions = device.activeFormat.supportedMaxPhotoDimensions.min(by: {
+        let dimensions = device.activeFormat.supportedMaxPhotoDimensions.sorted(by: {
             Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
-        }) {
-            output.maxPhotoDimensions = dimensions
+        })
+        if let selected = highResolution ? dimensions.last : dimensions.first,
+            output.maxPhotoDimensions.width != selected.width
+                || output.maxPhotoDimensions.height != selected.height
+        {
+            output.maxPhotoDimensions = selected
         }
         formats = [:]
         for value in output.availableRawPhotoPixelFormatTypes {
@@ -162,21 +183,75 @@ actor CameraService {
                 source = CameraPreviewSource(session: session, device: device)
                 return
             }
-            video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: type]
+            if (video.videoSettings[kCVPixelBufferPixelFormatTypeKey as String] as? OSType) != type {
+                video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: type]
+            }
             let sink = sink
             meter = CameraMeter(device: device) { sink.yield(.readings($0)) }
             video.setSampleBufferDelegate(meter, queue: meterQueue)
         }
         source = CameraPreviewSource(session: session, device: device)
+        prepareCapture()
+        print("Camera photo size: \(output.maxPhotoDimensions.width)×\(output.maxPhotoDimensions.height)")
+    }
+    private func maximumDimensions() -> CMVideoDimensions {
+        (session.inputs.first as? AVCaptureDeviceInput)?.device.activeFormat.supportedMaxPhotoDimensions.max {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        } ?? output.maxPhotoDimensions
+    }
+    private func photoSettings(format: CameraFormat) throws -> AVCapturePhotoSettings {
+        guard let pixelFormat = formats[format] else { throw CameraFailure.rawUnavailable }
+        let settings = AVCapturePhotoSettings(rawPixelFormatType: pixelFormat)
+        settings.maxPhotoDimensions = output.maxPhotoDimensions
+        settings.photoQualityPrioritization =
+            format == .bayerRAW ? .speed : (highResolution ? .quality : .balanced)
+        if let codec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
+            let size = output.maxPhotoDimensions
+            let scale = min(1, 1080.0 / Double(max(size.width, size.height)))
+            settings.rawEmbeddedThumbnailPhotoFormat = [
+                AVVideoCodecKey: codec, AVVideoWidthKey: max(1, Int(Double(size.width) * scale)),
+                AVVideoHeightKey: max(1, Int(Double(size.height) * scale)),
+            ]
+        }
+        return settings
+    }
+    private func prepareCapture() {
+        let settings = CameraFormat.allCases.compactMap { try? photoSettings(format: $0) }
+        output.setPreparedPhotoSettingsArray(settings, completionHandler: nil)
+    }
+    func setHighResolution(_ enabled: Bool) throws -> Configuration {
+        guard capture == nil, let device = (session.inputs.first as? AVCaptureDeviceInput)?.device else {
+            throw CameraFailure.notReady
+        }
+        highResolution = enabled
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        try configureOutput(device: device, macro: macro)
+        return try configuration()
     }
     func selectLens(_ id: String, macro: Bool = false) throws -> Configuration {
         guard !closed, capture == nil, let device = devices[id],
             let lens = lenses.first(where: { $0.id == id }),
             let previous = session.inputs.first as? AVCaptureDeviceInput
         else { throw CameraFailure.notReady }
-        let input = try AVCaptureDeviceInput(device: device)
+        let started = ProcessInfo.processInfo.systemUptime
+        // Macro on the current ultra-wide lens changes only its focus range.
+        if previous.device.uniqueID == id {
+            try device.lockForConfiguration()
+            if device.isAutoFocusRangeRestrictionSupported {
+                device.autoFocusRangeRestriction = macro && lens.macro ? .near : .none
+            }
+            device.unlockForConfiguration()
+            self.macro = macro && lens.macro
+            return try configuration()
+        }
+        let input = try inputs[id] ?? AVCaptureDeviceInput(device: device)
+        inputs[id] = input
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
+        defer {
+            session.commitConfiguration()
+            print("Camera lens \(lens.millimeters): \(ProcessInfo.processInfo.systemUptime - started) s")
+        }
         session.removeInput(previous)
         do {
             guard session.canAddInput(input) else { throw CameraFailure.configuration }
@@ -192,6 +267,35 @@ actor CameraService {
         }
         return try configuration()
     }
+    func focus(at point: CGPoint) throws {
+        guard session.isRunning, !session.isInterrupted, capture == nil,
+            let device = (session.inputs.first as? AVCaptureDeviceInput)?.device,
+            point.x.isFinite, point.y.isFinite
+        else { throw CameraFailure.notReady }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        let point = CGPoint(x: min(max(point.x, 0), 1), y: min(max(point.y, 0), 1))
+        if device.isFocusPointOfInterestSupported {
+            device.focusPointOfInterest = point
+            if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+        }
+        if device.isExposurePointOfInterestSupported {
+            device.exposurePointOfInterest = point
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+        }
+    }
+    func setExposureBias(_ value: Double) throws {
+        guard !closed, session.isRunning, value.isFinite, capture == nil,
+            let device = (session.inputs.first as? AVCaptureDeviceInput)?.device
+        else { throw CameraFailure.notReady }
+        let bias = min(max(Float(value), device.minExposureTargetBias), device.maxExposureTargetBias)
+        guard abs(bias - device.exposureTargetBias) >= 0.01 else { return }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        device.setExposureTargetBias(bias, completionHandler: nil)
+    }
     private func observeSession() {
         guard observations.isEmpty else { return }
         let sink = sink
@@ -199,8 +303,20 @@ actor CameraService {
         observations = [
             center.addObserver(
                 forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil
-            ) { _ in
-                sink.yield(.interrupted)
+            ) { note in
+                let code = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue ?? 0
+                print("Camera interrupted: \(code)")
+                let message: String
+                switch AVCaptureSession.InterruptionReason(rawValue: code) {
+                case .videoDeviceInUseByAnotherClient: message = "Another app is using the camera."
+                case .videoDeviceNotAvailableWithMultipleForegroundApps:
+                    message =
+                        "iOS paused camera access while another view is active. Stop screen sharing to resume."
+                case .videoDeviceNotAvailableDueToSystemPressure:
+                    message = "iOS paused the camera to reduce system load."
+                default: message = "The camera will resume when it is available."
+                }
+                sink.yield(.interrupted(message))
             },
             center.addObserver(
                 forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil
@@ -232,21 +348,13 @@ actor CameraService {
         meter = nil
         sink.finish()
     }
-    func takePhoto(format: CameraFormat, rotation: CGFloat, inbox: CameraInbox) async throws -> URL {
+    func takePhoto(format: CameraFormat, rotation: CGFloat, inbox: CameraInbox, location: CaptureLocation?)
+        async throws -> URL
+    {
         guard capture == nil, session.isRunning, !session.isInterrupted,
-            output.captureReadiness == .ready, let pixelFormat = formats[format]
+            output.captureReadiness == .ready
         else { throw CameraFailure.notReady }
-        let settings = AVCapturePhotoSettings(rawPixelFormatType: pixelFormat)
-        settings.maxPhotoDimensions = output.maxPhotoDimensions
-        settings.photoQualityPrioritization = format == .bayerRAW ? .speed : .quality
-        if let codec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
-            let size = output.maxPhotoDimensions
-            let scale = 1080.0 / Double(max(size.width, size.height))
-            settings.rawEmbeddedThumbnailPhotoFormat = [
-                AVVideoCodecKey: codec, AVVideoWidthKey: max(1, Int(Double(size.width) * scale)),
-                AVVideoHeightKey: max(1, Int(Double(size.height) * scale)),
-            ]
-        }
+        let settings = try photoSettings(format: format)
         guard let connection = output.connection(with: .video) else { throw CameraFailure.notReady }
         let angle =
             connection.isVideoRotationAngleSupported(rotation)
@@ -258,7 +366,7 @@ actor CameraService {
             if stopRequested && session.isRunning { session.stopRunning() }
         }
         return try await withCheckedThrowingContinuation { continuation in
-            let delegate = RAWPhotoCapture(inbox: inbox, continuation: continuation)
+            let delegate = RAWPhotoCapture(inbox: inbox, location: location, continuation: continuation)
             capture = delegate
             output.capturePhoto(with: settings, delegate: delegate)
         }
@@ -266,13 +374,23 @@ actor CameraService {
 }
 
 /// AVFoundation serializes the callbacks for this single capture request.
-nonisolated private final class RAWPhotoCapture: NSObject, AVCapturePhotoCaptureDelegate {
+nonisolated private final class RAWPhotoCapture: NSObject, AVCapturePhotoCaptureDelegate,
+    AVCapturePhotoFileDataRepresentationCustomizer
+{
     private let inbox: CameraInbox
     private let continuation: CheckedContinuation<URL, Error>
     private var result: Result<URL, Error>?
-    init(inbox: CameraInbox, continuation: CheckedContinuation<URL, Error>) {
+    private let location: CaptureLocation?
+    private let started = ProcessInfo.processInfo.systemUptime
+    init(inbox: CameraInbox, location: CaptureLocation?, continuation: CheckedContinuation<URL, Error>) {
         self.inbox = inbox
+        self.location = location
         self.continuation = continuation
+    }
+    func replacementMetadata(for photo: AVCapturePhoto) -> [String: Any]? {
+        var metadata = photo.metadata
+        if let location { metadata[kCGImagePropertyGPSDictionary as String] = location.gps }
+        return metadata
     }
     func photoOutput(
         _ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?
@@ -281,12 +399,19 @@ nonisolated private final class RAWPhotoCapture: NSObject, AVCapturePhotoCapture
             result = .failure(error)
             return
         }
-        guard photo.isRawPhoto, let data = photo.fileDataRepresentation() else {
+        guard photo.isRawPhoto,
+            let data = location == nil
+                ? photo.fileDataRepresentation() : photo.fileDataRepresentation(with: self)
+        else {
             result = .failure(CameraFailure.noData)
             return
         }
         // Default file representation preserves full lossless ProRAW quality.
         result = Result { try inbox.store(data) }
+        let size = photo.resolvedSettings.rawPhotoDimensions
+        print(
+            "Camera RAW \(size.width)×\(size.height) saved: \(ProcessInfo.processInfo.systemUptime - started) s"
+        )
     }
     func photoOutput(
         _ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,

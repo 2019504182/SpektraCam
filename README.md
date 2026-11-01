@@ -1,6 +1,6 @@
 # SpektraCam
 
-**Version 0.1.1**
+**Version 0.2.0**
 
 SpektraCam is a photo editor for iPhone.
 It has a local library for imported photos.
@@ -18,17 +18,28 @@ The library uses cached 384 px thumbnails and shares render resources when it re
 Editing uses a floating-point preview at 1080 px on the long edge. Export can use the original resolution.
 Thumbnails and previews can be rebuilt. Delete removes only the app copy and its edits.
 
-## Current work: 0.2.0
+## RAW camera and LUTs
 
-The RAW camera needs physical-device tests before the release tag.
 It captures DNG only and offers Apple ProRAW or Bayer RAW when available.
 Lens buttons use physical cameras at their native focal lengths.
-It has a preview histogram, exposure readout, grid, and shutter haptic.
+Tap the viewfinder to focus and meter. Use the vertical slider to adjust camera exposure.
+It has a preview histogram, exposure readout, grid, and shutter and completion haptics.
 Captured DNG files stay in a recovery inbox until library import succeeds.
+The DNG menu offers maximum native resolution when the selected lens supports it.
+Optional When In Use location access adds capture coordinates to the DNG.
+Capture also works without location access.
 Simulator shows an unavailable state; it cannot capture photos.
+Stop Device Hub's View Screen before using the physical camera.
+Apple blocks camera access during Device Hub interaction.
+The camera's Library button returns to the main library. Close returns to the previous screen.
+
+RAW dimensions come from the RAW decoder, not the embedded preview.
+The app repairs old library entries that used preview dimensions.
+The app icon uses Runze Ni's Icon Composer file. Its source vectors are in `Design/Icon`.
 
 Develop has two 3D `.cube` LUT slots with separate Mix controls.
 Use LUTs made for encoded sRGB photos. Log and HDR input transforms are not supported.
+RAW photo-LUT input uses the system decoder's default rendering. Film input stays scene-linear.
 The library LUT Manager shares import, rename and batch deletion with the editor picker.
 LUTs used by saved edits or Undo cannot be deleted.
 LUT mode skips film/print color. Halation and diffusion act on linear RGB before the LUTs.
@@ -96,10 +107,9 @@ The native tests use the reference data in `Reference/Fixtures`.
 
 ## Next work
 
-Complete performance tests on a physical iPhone.
+Complete the physical-device test matrix, including Max resolution and interruptions.
 Decrease memory use for large RAW exports and diffusion.
 Validate genuine iPhone and Indigo DNG files.
-Complete these checks before the 0.2.0 release tag.
 
 Current export format: SDR, sRGB, 8-bit.
 

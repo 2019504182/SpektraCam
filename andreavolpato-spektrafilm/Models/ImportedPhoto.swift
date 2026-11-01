@@ -40,7 +40,7 @@ nonisolated struct ImportedPhoto: Sendable {
         else { return nil }
         bitmap.draw(preview, in: CGRect(x: 0, y: 0, width: preview.width, height: preview.height))
         guard let decodedPreview = bitmap.makeImage() else { return nil }
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         var temperature: Double?
         if let type = CGImageSourceGetType(source), UTType(type as String)?.conforms(to: .rawImage) == true {
             // A RAW embedded thumbnail is not a substitute for a supported RAW decoder.
@@ -50,13 +50,16 @@ nonisolated struct ImportedPhoto: Sendable {
             let value = Double(raw.neutralTemperature)
             guard value.isFinite, (1000...50000).contains(value) else { return nil }
             temperature = value
+            // iOS ImageIO may report the DNG's embedded preview dimensions.
+            properties[kCGImagePropertyPixelWidth] = Int(raw.nativeSize.width)
+            properties[kCGImagePropertyPixelHeight] = Int(raw.nativeSize.height)
         }
         return .init(
             data: data, preview: decodedPreview,
-            width: properties?[kCGImagePropertyPixelWidth] as? Int ?? preview.width,
-            height: properties?[kCGImagePropertyPixelHeight] as? Int ?? preview.height,
+            width: properties[kCGImagePropertyPixelWidth] as? Int ?? preview.width,
+            height: properties[kCGImagePropertyPixelHeight] as? Int ?? preview.height,
             rawTemperature: temperature,
             metadata: PhotoMetadata(
-                properties: properties ?? [:], type: CGImageSourceGetType(source), image: decodedPreview))
+                properties: properties, type: CGImageSourceGetType(source), image: decodedPreview))
     }
 }

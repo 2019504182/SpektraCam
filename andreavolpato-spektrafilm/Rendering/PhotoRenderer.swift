@@ -23,6 +23,7 @@ actor PhotoRenderer {
     private var input: SourceImageRenderer.Input?
     private var inputKey: EditRecipe.Source?
     private var inputTemperature: Double?
+    private var inputLookMode: EditRecipe.LookMode?
     private var meter: MeteringCore.Image?
     private var meteredEV = [String: Double]()
     private var filmRecipe: EditRecipe?
@@ -45,6 +46,7 @@ actor PhotoRenderer {
     private func baselineInput() throws -> SourceImageRenderer.Input {
         if let baseline { return baseline }
         var recipe = EditRecipe()
+        recipe.look.mode = inputLookMode ?? .spektrafilm
         recipe.temperature = initialTemperature
         let result = try SourceImageRenderer.prepare(
             data: data, fallback: source, recipe: recipe, maximum: previewMaximum)
@@ -70,7 +72,19 @@ actor PhotoRenderer {
         meteredEV[method] = value
         return value
     }
+    private func selectInputMode(_ mode: EditRecipe.LookMode) {
+        if initialTemperature != nil, inputLookMode != mode {
+            // RAW film and photo-LUT input have different decoder rendering intents.
+            baseline = nil
+            baselineImage = nil
+            input = nil
+            meter = nil
+            meteredEV.removeAll()
+        }
+        inputLookMode = mode
+    }
     private func previewInput(_ recipe: EditRecipe) throws -> SourceImageRenderer.Input {
+        selectInputMode(recipe.look.mode)
         if inputKey == recipe.source, inputTemperature == recipe.temperature, let input { return input }
         let result: SourceImageRenderer.Input
         if recipe.source == EditRecipe.Source(), recipe.temperature == initialTemperature {
@@ -247,11 +261,10 @@ actor PhotoRenderer {
         if let cached = exportImage {
             image = cached
         } else {
-            guard let data, let cgSource = CGImageSourceCreateWithData(data as CFData, nil),
-                let props = CGImageSourceCopyPropertiesAtIndex(cgSource, 0, nil) as? [CFString: Any],
-                let width = props[kCGImagePropertyPixelWidth] as? Int,
-                let height = props[kCGImagePropertyPixelHeight] as? Int
-            else { throw PhotoExporter.Failure.decode }
+            guard let data else { throw PhotoExporter.Failure.decode }
+            let dimensions = try PhotoExporter.sourceDimensions(data)
+            let width = Int(dimensions.width)
+            let height = Int(dimensions.height)
             let originalLong = max(width, height)
             let oriented =
                 recipe.geometry.quarterTurns % 2 == 0
@@ -266,7 +279,10 @@ actor PhotoRenderer {
             try RenderMemoryBudget.check(
                 width: max(1, Int(ceil(Double(width) * scale))),
                 height: max(1, Int(ceil(Double(height) * scale))), recipe: recipe)
-            let decoded = try PhotoExporter.decodeSource(data, maximum: maximum)
+            // The RAW input path decodes directly to float; an 8-bit fallback decode is redundant.
+            let decoded =
+                initialTemperature != nil ? source : try PhotoExporter.decodeSource(data, maximum: maximum)
+            selectInputMode(recipe.look.mode)
             let input = try SourceImageRenderer.prepare(
                 data: data, fallback: decoded, recipe: recipe, maximum: maximum)
             let (library, gpu) = try await renderResources.load()

@@ -36,6 +36,7 @@ checks={
  'gamut':(['SpectralCore','AppearanceCore','GamutCore'],['Reference/Fixtures']),
 }
 checks['histogram'] = (['PhotoHistogram'], [])
+checks['geotag'] = (['CameraLocation','PhotoMetadata'], [])
 checks['raw-input'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRenderer','PhotoMetadata','ImportedPhoto'], [])
 checks['tone'] = (checks['recipe'][0] + ['ToneRenderer','RawAdjustments','PhotoColorBridge','CubeLUT'], [])
 checks['lut'] = (checks['tone'][0] + ['LUTLibrary'], [])

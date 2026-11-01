@@ -22,6 +22,12 @@ import UIKit
     private(set) var lenses: [CameraLens] = []
     private(set) var selectedLens: CameraLens?
     private(set) var macro = false
+    private(set) var highResolution = false
+    private(set) var maximumMegapixels = 12
+    private(set) var pauseReason: String?
+    private(set) var exposureBias = 0.0
+    private(set) var exposureRange: ClosedRange<Double> = -3...3
+    private let location = CameraLocation()
     private var beforeMacro: String?
     private var backLens: String?
     private var wantsActive = false
@@ -34,6 +40,7 @@ import UIKit
         guard !closed else { return }
         wantsActive = active
         if !active {
+            location.setActive(false)
             state = .paused
             await service.stop()
             return
@@ -45,7 +52,13 @@ import UIKit
         do {
             let configuration = try await service.start()
             apply(configuration)
-            if wantsActive { state = .ready } else { await service.stop() }
+            if wantsActive {
+                state = .ready
+                pauseReason = nil
+                location.setActive(true)
+            } else {
+                await service.stop()
+            }
         } catch {
             guard wantsActive else {
                 state = .paused
@@ -64,7 +77,9 @@ import UIKit
             switch event {
             case .readings(let value): readings = value
             case .ready(let ready): outputReady = ready
-            case .interrupted: if wantsActive { state = .paused }
+            case .interrupted(let reason):
+                pauseReason = reason
+                if wantsActive { state = .paused }
             case .resumed: if wantsActive { await setActive(true) }
             case .failed(let message): if wantsActive { state = .failed(message) }
             }
@@ -82,7 +97,8 @@ import UIKit
         do {
             _ = try await service.takePhoto(
                 format: format, rotation: source?.captureRotation ?? 90,
-                inbox: CameraInbox(root: library.files.root))
+                inbox: CameraInbox(root: library.files.root), location: location.captureLocation)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             savedCount += try await library.recoverCaptures()
             saveFailure = nil
         } catch { saveFailure = error.localizedDescription }
@@ -104,6 +120,10 @@ import UIKit
         lenses = configuration.lenses
         selectedLens = configuration.selectedLens
         macro = configuration.macro
+        highResolution = configuration.highResolution
+        maximumMegapixels = configuration.maximumMegapixels
+        exposureBias = configuration.exposureBias
+        exposureRange = configuration.exposureRange
         if !formats.contains(format), let first = formats.first { format = first }
     }
     func selectLens(_ lens: CameraLens, macro: Bool = false) async {
@@ -115,6 +135,31 @@ import UIKit
             saveFailure = nil
             UISelectionFeedbackGenerator().selectionChanged()
         } catch { saveFailure = error.localizedDescription }
+    }
+    func setHighResolution(_ enabled: Bool) async {
+        guard !busy, state == .ready else { return }
+        busy = true
+        defer { busy = false }
+        do { apply(try await service.setHighResolution(enabled)) } catch {
+            saveFailure = error.localizedDescription
+        }
+    }
+    func focus(at point: CGPoint) async {
+        guard state == .ready, !busy else { return }
+        do {
+            try await service.focus(at: point)
+            UISelectionFeedbackGenerator().selectionChanged()
+        } catch { saveFailure = error.localizedDescription }
+    }
+    func setExposureBias(_ value: Double) {
+        guard state == .ready, !busy else { return }
+        exposureBias = min(max(value, exposureRange.lowerBound), exposureRange.upperBound)
+        let target = exposureBias
+        Task {
+            do { try await service.setExposureBias(target) } catch {
+                saveFailure = error.localizedDescription
+            }
+        }
     }
     func toggleMacro() async {
         if macro {
@@ -149,6 +194,7 @@ import UIKit
     func close() async {
         closed = true
         wantsActive = false
+        location.setActive(false)
         await service.shutdown()
     }
 }
