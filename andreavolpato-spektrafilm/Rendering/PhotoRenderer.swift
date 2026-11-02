@@ -85,7 +85,9 @@ actor PhotoRenderer {
     }
     private func previewInput(_ recipe: EditRecipe) throws -> SourceImageRenderer.Input {
         selectInputMode(recipe.look.mode)
-        if inputKey == recipe.source, inputTemperature == recipe.temperature, let input { return input }
+        if inputKey == recipe.source, inputTemperature == recipe.temperature, let input {
+            return input
+        }
         let result: SourceImageRenderer.Input
         if recipe.source == EditRecipe.Source(), recipe.temperature == initialTemperature {
             result = try baselineInput()
@@ -95,7 +97,8 @@ actor PhotoRenderer {
                 || (recipe.temperature == initialTemperature && recipe.source.tint == 0)
             if canReuse { _ = try baselineInput() }
             result = try SourceImageRenderer.prepare(
-                data: canReuse ? nil : data, fallback: source, recipe: recipe, maximum: previewMaximum,
+                data: canReuse ? nil : data, fallback: source, recipe: recipe,
+                maximum: previewMaximum,
                 renderedSource: canReuse ? baselineImage : nil)
         }
         input = result
@@ -136,13 +139,21 @@ actor PhotoRenderer {
         library: ModelLibrary, gpu: MetalFilmPipeline, preview: Bool
     ) async throws -> (CGImage, CGImage?, CGImage?) {
         var physical = EditRecipe()
+        // The carrier uses film optics, but its RAW controls share the LUT source reference.
+        physical.look.mode = .lut
         let prefixes = [
             "film_render.grain.", "film_render.halation.", "camera.diffusion_filter.",
             "enlarger.diffusion_filter.",
         ]
-        physical.numbers = recipe.numbers.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
-        physical.flags = recipe.flags.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
-        physical.choices = recipe.choices.filter { entry in prefixes.contains { entry.key.hasPrefix($0) } }
+        physical.numbers = recipe.numbers.filter { entry in
+            prefixes.contains { entry.key.hasPrefix($0) }
+        }
+        physical.flags = recipe.flags.filter { entry in
+            prefixes.contains { entry.key.hasPrefix($0) }
+        }
+        physical.choices = recipe.choices.filter { entry in
+            prefixes.contains { entry.key.hasPrefix($0) }
+        }
         physical.numbers["camera.film_format_mm"] = recipe.number("camera.film_format_mm")
         physical.monochromeGrain = false
         physical.tone = recipe.tone.rawStage
@@ -164,7 +175,8 @@ actor PhotoRenderer {
         if preview, opticsKey == optics, opticsSize == size, let image = opticsImage {
             source = image
         } else {
-            if opticalFlags.contains(where: { optics.flag($0) }) || !optics.tone.rawStage.isIdentity {
+            if opticalFlags.contains(where: { optics.flag($0) }) || !optics.tone.rawStage.isIdentity
+            {
                 source = try await gpu.processOptics(
                     input.pixels, width: input.width, height: input.height,
                     pipeline: FilmPipeline(library: library, recipe: optics))
@@ -219,9 +231,12 @@ actor PhotoRenderer {
         if recipe.look.mode == .lut {
             let frames = try await effectFrames(
                 input, recipe: recipe, library: library, gpu: gpu, preview: preview)
-            let residual: (CGImage, CGImage)? = frames.1.flatMap { dirty in frames.2.map { (dirty, $0) } }
+            let residual: (CGImage, CGImage)? = frames.1.flatMap { dirty in
+                frames.2.map { (dirty, $0) }
+            }
             return try ToneRenderer.render(
-                frames.0, tone: recipe.tone.outputStage, luts: applications(recipe), residual: residual,
+                frames.0, tone: recipe.tone.outputStage, luts: applications(recipe),
+                residual: residual,
                 monochromeResidual: recipe.monochromeGrain)
         }
         var key = recipe.processingRecipe
@@ -247,14 +262,17 @@ actor PhotoRenderer {
             mixed = film
         } else {
             let rawSource = try ToneRenderer.working(
-                SourceImageRenderer.workingImage(input), tone: recipe.tone.rawStage)
-            mixed = try SourceImageRenderer.blend(film: film, sourceImage: rawSource, amount: recipe.mix)
+                SourceImageRenderer.workingImage(input), tone: recipe.tone.rawStage,
+                normalizationEV: exposure(recipe, library: library))
+            mixed = try SourceImageRenderer.blend(
+                film: film, sourceImage: rawSource, amount: recipe.mix)
         }
         return try ToneRenderer.render(mixed, tone: recipe.tone.outputStage)
     }
 
     func export(
-        _ recipe: EditRecipe, size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double,
+        _ recipe: EditRecipe, size: PhotoExporter.Size, format: PhotoExporter.Format,
+        quality: Double,
         allowOvercommit: Bool = false
     )
         async throws -> (URL, Int, Int)
@@ -276,7 +294,8 @@ actor PhotoRenderer {
             let crop = recipe.crop.pixelRect(in: oriented)
             let fraction = max(crop.width, crop.height) / max(oriented.width, oriented.height)
             let maximum = min(
-                originalLong, size.maximum.map { Int(ceil(Double($0) / max(fraction, 1e-6))) } ?? originalLong
+                originalLong,
+                size.maximum.map { Int(ceil(Double($0) / max(fraction, 1e-6))) } ?? originalLong
             )
             let scale = Double(maximum) / Double(originalLong)
             let (_, exportGPU) = try await renderResources.load()
@@ -290,14 +309,16 @@ actor PhotoRenderer {
                 allowOvercommit: allowOvercommit)
             // The RAW input path decodes directly to float; an 8-bit fallback decode is redundant.
             let decoded =
-                initialTemperature != nil ? source : try PhotoExporter.decodeSource(data, maximum: maximum)
+                initialTemperature != nil
+                ? source : try PhotoExporter.decodeSource(data, maximum: maximum)
             selectInputMode(recipe.look.mode)
             let input = try SourceImageRenderer.prepare(
                 data: data, fallback: decoded, recipe: recipe, maximum: maximum)
             let (library, gpu) = try await renderResources.load()
             let graded: CGImage
             do {
-                graded = try await frame(input, recipe: recipe, library: library, gpu: gpu, preview: false)
+                graded = try await frame(
+                    input, recipe: recipe, library: library, gpu: gpu, preview: false)
             } catch {
                 await gpu.releaseWorkingCaches()
                 throw error
@@ -331,13 +352,16 @@ actor PhotoRenderer {
         guard let maximum, max(image.width, image.height) > maximum else { return image }
         let scale = Double(maximum) / Double(max(image.width, image.height))
         let output = CIImage(cgImage: image).applyingFilter(
-            "CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+            "CILanczosScaleTransform",
+            parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
         let rect = CGRect(
-            x: 0, y: 0, width: floor(Double(image.width) * scale), height: floor(Double(image.height) * scale)
+            x: 0, y: 0, width: floor(Double(image.width) * scale),
+            height: floor(Double(image.height) * scale)
         )
         guard
             let resized = CIContext(options: [.cacheIntermediates: false]).createCGImage(
-                output, from: rect, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                output, from: rect, format: .RGBA8,
+                colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         else { throw PhotoExporter.Failure.render }
         return resized
     }

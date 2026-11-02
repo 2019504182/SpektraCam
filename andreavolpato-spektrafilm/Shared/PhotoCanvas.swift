@@ -78,7 +78,9 @@ struct ZoomablePhoto: UIViewRepresentable {
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             (scrollView as? PhotoScrollView)?.photoView
         }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) { (scrollView as? PhotoScrollView)?.centerPhoto() }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            (scrollView as? PhotoScrollView)?.centerPhoto()
+        }
         @objc func doubleTap(_ recognizer: UITapGestureRecognizer) {
             guard let view = recognizer.view as? PhotoScrollView else { return }
             if view.zoomScale > view.minimumZoomScale * 1.05 {
@@ -131,11 +133,14 @@ final class PhotoScrollView: UIScrollView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard bounds.width > 0, bounds.height > 0, imageSize.width > 0, imageSize.height > 0 else { return }
+        guard bounds.width > 0, bounds.height > 0, imageSize.width > 0, imageSize.height > 0 else {
+            return
+        }
         if lastBounds != bounds.size {
             let saved = pendingViewport ?? (lastBounds == .zero ? nil : viewport())
             let relative = saved?.zoom ?? 1
-            let fit = min(bounds.width / imageSize.width, max(1, bounds.height - topInset) / imageSize.height)
+            let fit = min(
+                bounds.width / imageSize.width, max(1, bounds.height - topInset) / imageSize.height)
             lastBounds = bounds.size
             minimumZoomScale = fit
             maximumZoomScale = max(fit * 8, 1)
@@ -143,26 +148,34 @@ final class PhotoScrollView: UIScrollView {
             centerPhoto()
             if relative > 1.05, let saved {
                 let center = photoView.convert(
-                    CGPoint(x: saved.center.x * imageSize.width, y: saved.center.y * imageSize.height),
+                    CGPoint(
+                        x: saved.center.x * imageSize.width, y: saved.center.y * imageSize.height),
                     to: self)
                 let x = min(
                     max(center.x - bounds.width / 2, -contentInset.left),
                     max(-contentInset.left, contentSize.width - bounds.width + contentInset.right))
                 let y = min(
                     max(center.y - bounds.height / 2, -contentInset.top),
-                    max(-contentInset.top, contentSize.height - bounds.height + contentInset.bottom))
+                    max(-contentInset.top, contentSize.height - bounds.height + contentInset.bottom)
+                )
                 setContentOffset(CGPoint(x: x, y: y), animated: false)
             } else {
-                setContentOffset(CGPoint(x: -contentInset.left, y: -contentInset.top), animated: false)
+                setContentOffset(
+                    CGPoint(x: -contentInset.left, y: -contentInset.top), animated: false)
             }
             pendingViewport = nil
         }
         centerPhoto()
     }
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Decide ownership before a pan starts. Never cancel a live pinch/page transition.
+        if gestureRecognizer === panGestureRecognizer, zoomScale <= minimumZoomScale * 1.01 {
+            return false
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
     func centerPhoto() {
         guard !replacingImage else { return }
-        // Let the native page controller own horizontal swipes at fit. Pinch remains enabled.
-        panGestureRecognizer.isEnabled = zoomScale > minimumZoomScale * 1.01
         let horizontal = max(0, (bounds.width - contentSize.width) / 2)
         let reserve = zoomScale > minimumZoomScale * 1.05 ? zoomedTopInset : topInset
         let vertical = topAligned ? 0 : max(0, (bounds.height - reserve - contentSize.height) / 2)
@@ -189,7 +202,8 @@ struct PhotoViewport: View {
                 label: edited ? "Edited photo" : "Photo", onTap: onTap
             )
             .frame(width: proxy.size.width, height: proxy.size.height)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading).clipped()
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .clipped()
         }
     }
 }

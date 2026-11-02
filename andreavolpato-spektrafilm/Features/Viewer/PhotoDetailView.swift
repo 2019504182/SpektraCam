@@ -34,13 +34,7 @@ struct PhotoDetailView: View {
     }
     var body: some View {
         ZStack {
-            TabView(selection: $selectedID) {
-                ForEach(photos) { item in
-                    AlbumPhotoPage(photo: item, images: library.images)
-                        .tag(item.id)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            AlbumPager(photos: photos, images: library.images, selection: $selectedID)
             if working { ProgressView().padding().background(.regularMaterial, in: .capsule) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,7 +93,10 @@ struct PhotoDetailView: View {
                 ExportPanel(originalURL: request.originalURL)
             }
         }
-        .alert("Photo", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+        .alert(
+            "Photo",
+            isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })
+        ) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(failure ?? "")
@@ -118,7 +115,9 @@ struct PhotoDetailView: View {
             return photo?.isRAW == true ? "RAW" : photo?.metadata.format ?? "Photo"
         }
         if recipe.look.mode == .lut {
-            let names = [recipe.look.first.id, recipe.look.second.id].compactMap { library.luts.name($0) }
+            let names = [recipe.look.first.id, recipe.look.second.id].compactMap {
+                library.luts.name($0)
+            }
             return names.isEmpty ? "No LUT selected" : names.joined(separator: " · ")
         }
         return recipe.bypassesPrint
@@ -138,7 +137,9 @@ struct PhotoDetailView: View {
         working = true
         Task {
             defer { working = false }
-            do { try await library.revert([selectedID]) } catch { failure = error.localizedDescription }
+            do { try await library.revert([selectedID]) } catch {
+                failure = error.localizedDescription
+            }
         }
     }
     private func deletePhoto() {
@@ -175,7 +176,8 @@ struct PhotoDetailView: View {
                     let session = EditorSession(photo: imported, recipe: recipe, luts: library.luts)
                     if let image, photo.hasEdits { session.displayImage = image }
                     if exporting {
-                        export = ExportRequest(session: session, originalURL: library.files.sourceURL(photo))
+                        export = ExportRequest(
+                            session: session, originalURL: library.files.sourceURL(photo))
                     } else {
                         session.recipeDidChange = { recipe, immediate in
                             library.queueRecipe(recipe, for: photo.id, immediate: immediate)
@@ -199,7 +201,9 @@ struct PhotoDetailView: View {
                 request.cancel()
             }
             try Task.checkCancellation()
-            if let item = items.first, let name = item.addressRepresentations?.cityWithContext ?? item.name {
+            if let item = items.first,
+                let name = item.addressRepresentations?.cityWithContext ?? item.name
+            {
                 try library.setLocationName(name, for: photo.id)
             }
         } catch { /* Keep the capture date when the optional lookup is unavailable. */  }
@@ -209,13 +213,17 @@ struct PhotoDetailView: View {
 /// Capture details stay visible without opening the information panel.
 private struct PhotoBanner: View {
     let photo: LibraryPhoto
-    private var title: String { photo.locationName ?? photo.date.formatted(date: .long, time: .omitted) }
+    private var title: String {
+        photo.locationName ?? photo.date.formatted(date: .long, time: .omitted)
+    }
     private var detail: String {
-        photo.date.formatted(date: photo.locationName == nil ? .omitted : .abbreviated, time: .shortened)
+        photo.date.formatted(
+            date: photo.locationName == nil ? .omitted : .abbreviated, time: .shortened)
     }
     var body: some View {
         VStack(spacing: 2) {
-            Text(title).font(.subheadline.weight(.semibold)).accessibilityIdentifier("photo.banner.title")
+            Text(title).font(.subheadline.weight(.semibold)).accessibilityIdentifier(
+                "photo.banner.title")
             HStack(spacing: 5) {
                 Text(detail).font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier(
                     "photo.banner.date")
@@ -265,27 +273,38 @@ private struct PhotoViewerControls: View {
     }
     private var trailingButtons: some View {
         HStack(spacing: 8) {
-            Button { confirmRevert = true } label: { Image(systemName: "arrow.uturn.backward").frame(width: 28, height: 28) }
-                .accessibilityLabel("Revert").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle)
-                .disabled(!canRevert).accessibilityIdentifier("photo.revert")
-                .confirmationDialog(
-                    "Revert to original?", isPresented: $confirmRevert, titleVisibility: .visible
-                ) {
-                    Button("Revert to Original", role: .destructive, action: revert)
-                }
+            Button {
+                confirmRevert = true
+            } label: {
+                Image(systemName: "arrow.uturn.backward").frame(width: 28, height: 28)
+            }
+            .accessibilityLabel("Revert").controlSize(.regular).buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .disabled(!canRevert).accessibilityIdentifier("photo.revert")
+            .confirmationDialog(
+                "Revert to original?", isPresented: $confirmRevert, titleVisibility: .visible
+            ) {
+                Button("Revert to Original", role: .destructive, action: revert)
+            }
             deleteButton
         }
     }
     private var developButton: some View {
         Button(action: develop) {
-            Text("Develop").font(.headline).lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 24)
+            Text("Develop").font(.headline).lineLimit(1).fixedSize(
+                horizontal: true, vertical: false
+            )
+            .padding(.horizontal, 24)
         }.buttonStyle(.glassProminent).accessibilityIdentifier("photo.develop")
     }
     private var exportButton: some View {
-        Button(action: export) { Image(systemName: "square.and.arrow.up").frame(width: 28, height: 28) }
-            .accessibilityLabel("Export").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
-                "photo.export")
+        Button(action: export) {
+            Image(systemName: "square.and.arrow.up").frame(width: 28, height: 28)
+        }
+        .accessibilityLabel("Export").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(
+            .circle
+        ).accessibilityIdentifier(
+            "photo.export")
     }
     private var deleteButton: some View { PhotoDeleteButton(action: delete) }
 }
@@ -294,20 +313,27 @@ private struct PhotoDeleteButton: View {
     let action: () -> Void
     @State private var confirmDelete = false
     var body: some View {
-        Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash").frame(width: 28, height: 28) }
-            .accessibilityLabel("Delete").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
-                "photo.delete"
-            )
-            .confirmationDialog("Delete Photo?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("Delete App Copy", role: .destructive, action: action)
-            } message: {
-                Text("This removes the app copy and its edits. Your source photo stays unchanged.")
-            }
+        Button(role: .destructive) {
+            confirmDelete = true
+        } label: {
+            Image(systemName: "trash").frame(width: 28, height: 28)
+        }
+        .accessibilityLabel("Delete").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(
+            .circle
+        ).accessibilityIdentifier(
+            "photo.delete"
+        )
+        .confirmationDialog("Delete Photo?", isPresented: $confirmDelete, titleVisibility: .visible)
+        {
+            Button("Delete App Copy", role: .destructive, action: action)
+        } message: {
+            Text("This removes the app copy and its edits. Your source photo stays unchanged.")
+        }
     }
 }
 
 /// Each page loads a cached preview; full originals stay outside the paging view.
-private struct AlbumPhotoPage: View {
+struct AlbumPhotoPage: View {
     let photo: LibraryPhoto
     let images: LibraryImages
     @State private var image: UIImage?

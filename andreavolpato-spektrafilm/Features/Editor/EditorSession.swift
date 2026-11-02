@@ -76,7 +76,9 @@ import SwiftUI
     nonisolated func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
     var usedLUTIdentifiers: Set<String> {
-        (undoStack + redoStack + [recipe]).reduce(into: Set<String>()) { $0.formUnion($1.look.identifiers) }
+        (undoStack + redoStack + [recipe]).reduce(into: Set<String>()) {
+            $0.formUnion($1.look.identifiers)
+        }
     }
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -85,7 +87,9 @@ import SwiftUI
         initial.temperature = photo.rawTemperature
         return recipe != initial
     }
-    func binding<Value>(_ keyPath: WritableKeyPath<EditRecipe, Value>, key: String) -> Binding<Value> {
+    func binding<Value>(_ keyPath: WritableKeyPath<EditRecipe, Value>, key: String) -> Binding<
+        Value
+    > {
         Binding(
             get: { self.recipe[keyPath: keyPath] },
             set: { value in
@@ -100,7 +104,8 @@ import SwiftUI
             lastKey = ""
         } else if interactionKey == key {
             interactionKey = nil
-            lastKey = ""
+            // UIKit can send a final valueChanged after touch-up. Keep it in the same undo group.
+            // The next touch-down starts a new group.
             renderFilmIfNeeded()
             recipeDidChange?(recipe, true)
         }
@@ -137,7 +142,8 @@ import SwiftUI
         }
     }
     func export(
-        size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double, allowOvercommit: Bool = false
+        size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double,
+        allowOvercommit: Bool = false
     ) async throws -> (
         URL, Int, Int
     ) {
@@ -145,7 +151,8 @@ import SwiftUI
         await filmTask?.value
         try Task.checkCancellation()
         return try await filmRenderer.export(
-            snapshot, size: size, format: format, quality: quality, allowOvercommit: allowOvercommit)
+            snapshot, size: size, format: format, quality: quality, allowOvercommit: allowOvercommit
+        )
     }
     /// Cache only a frame which matches the recipe that is being saved.
     func currentPreview() async -> CGImage? {
@@ -209,7 +216,8 @@ import SwiftUI
                 let revision = renderRevision
                 let geometry = recipe.geometry
                 let crop = recipe.crop
-                let frame = await GeometryWorker.shared.render(source, geometry: geometry, crop: crop)
+                let frame = await GeometryWorker.shared.render(
+                    source, geometry: geometry, crop: crop)
                 guard !Task.isCancelled, renderEpoch == epoch else { return }
                 guard let frame else {
                     if revision != renderRevision { continue }
@@ -287,7 +295,8 @@ import SwiftUI
                     if interactionKey == nil {
                         failureTask = Task {
                             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-                            guard !Task.isCancelled, filmEpoch == epoch, filmRevision == revision else {
+                            guard !Task.isCancelled, filmEpoch == epoch, filmRevision == revision
+                            else {
                                 return
                             }
                             filmRenderFailed = true
@@ -333,7 +342,9 @@ private actor GeometryWorker {
         if cachedSource === source, cachedGeometry == geometry, let cachedImage {
             image = cachedImage
         } else {
-            guard let rendered = GeometryRenderer.render(source, geometry: geometry) else { return nil }
+            guard let rendered = GeometryRenderer.render(source, geometry: geometry) else {
+                return nil
+            }
             image = rendered
             cachedSource = source
             cachedGeometry = geometry

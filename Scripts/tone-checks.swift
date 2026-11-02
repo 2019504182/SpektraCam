@@ -13,6 +13,7 @@ import Foundation
             provider: CGDataProvider(data: Data(values) as CFData)!, decode: nil,
             shouldInterpolate: false, intent: .defaultIntent)!
         var tone = EditRecipe.Tone()
+        tone.algorithm = 4
         let neutral = try ToneRenderer.render(image, tone: tone)
         precondition(neutral === image, "Neutral tone changed the frame")
         for pivot in [0.0, 0.1, 0.35, 0.435, 0.9, 1.0] {
@@ -33,6 +34,7 @@ import Foundation
         for shadow in [-1.0, 0, 1] {
             for highlight in [-1.0, 0, 1] {
                 tone = EditRecipe.Tone()
+                tone.algorithm = 4
                 tone.algorithm = 1
                 tone.shadows = shadow
                 tone.highlights = highlight
@@ -50,6 +52,7 @@ import Foundation
             }
         }
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.contrast = 1.5
         let rendered = try ToneRenderer.render(image, tone: tone)
         let pixels = try PhotoColorBridge.decode(rendered)
@@ -61,15 +64,18 @@ import Foundation
         }
         precondition(error < 0.01, "Native curve uses the wrong working space: \(error)")
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.shadows = 1
         precondition(ToneRenderer.curve(0.15, tone: tone) > 0.15)
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.algorithm = 1
         tone.highlights = -1
         precondition(ToneRenderer.curve(0.75, tone: tone) < 0.75)
         let color = try PhotoColorBridge.encode(
             [SIMD4<Float>(0.7, 0.35, 0.2, 1)], width: 1, height: 1)
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.monochrome = true
         let gray = try PhotoColorBridge.decode(ToneRenderer.render(color, tone: tone))[0]
         precondition(abs(gray.x - gray.y) < 0.0001 && abs(gray.y - gray.z) < 0.0001)
@@ -86,6 +92,7 @@ import Foundation
         let hdrImage = hdrContext.createCGImage(
             hdrInput, from: hdrInput.extent, format: .RGBAf, colorSpace: hdrSpace)!
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.exposureEV = 4
         let over = try PhotoColorBridge.decode(ToneRenderer.working(hdrImage, tone: tone))
         precondition(
@@ -97,6 +104,7 @@ import Foundation
             recovered[1].x < 1 && recovered[1].x - recovered[0].x > 0.05,
             "Highlights cannot recover distinct bright values")
         tone = EditRecipe.Tone()
+        tone.algorithm = 4
         tone.exposureEV = -3
         tone.shadows = 1
         let low = try PhotoColorBridge.decode(ToneRenderer.working(hdrImage, tone: tone))
@@ -106,6 +114,7 @@ import Foundation
         )
         for shadow in [-2.0, -1, 0, 1, 2] {
             tone = EditRecipe.Tone()
+            tone.algorithm = 4
             tone.algorithm = 3
             tone.shadows = shadow
             let result = try PhotoColorBridge.decode(ToneRenderer.working(image, tone: tone))
@@ -118,7 +127,7 @@ import Foundation
         }
         let legacy = try JSONDecoder().decode(EditRecipe.self, from: Data("{\"version\":1}".utf8))
         precondition(legacy.version == 3 && legacy.tone.isIdentity && !legacy.monochromeGrain)
-        for version in 1...4 {
+        for version in 1...5 {
             var savedTone = EditRecipe.Tone()
             savedTone.algorithm = version
             savedTone.contrast = 1.3

@@ -14,22 +14,27 @@ actor MetalFilmPipeline {
     private let diffusion: DiffusionMetalKernels
 
     init(sources: [String]) throws {
-        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue()
+        else {
             throw Failure.unavailable
         }
         let options = MTLCompileOptions()
         options.mathMode = .safe
         options.mathFloatingPointFunctions = .precise
         let library = try device.makeLibrary(
-            source: sources.joined(separator: "\n") + RawAdjustments.shader + RawAdjustments.bufferKernel
+            source: sources.joined(separator: "\n") + RawAdjustments.shader
+                + RawAdjustments.bufferKernel
                 + Self.lutKernels + Self.monochromeKernel, options: options)
         var functions = [String: MTLComputePipelineState]()
         for name in [
-            "finish_linear_image", "grain_layers_mean_image", "raw_adjust_image", "camera_exposure_image",
+            "finish_linear_image", "grain_layers_mean_image", "raw_adjust_image",
+            "camera_exposure_image",
             "film_development_image", "coupler_development_image",
-            "paper_exposure_image", "paper_development_image", "scan_image_xyz", "compress_image_gamut",
+            "paper_exposure_image", "paper_development_image", "scan_image_xyz",
+            "compress_image_gamut",
             "encode_image_srgb", "mix_images", "image_maximum", "boost_image", "grain_layers_image",
-            "random_lognormal_image", "finish_grain_image", "apply_glare_image", "encode_monochrome_grain",
+            "random_lognormal_image", "finish_grain_image", "apply_glare_image",
+            "encode_monochrome_grain",
         ] {
             guard let function = library.makeFunction(name: name) else { throw Failure.unavailable }
             functions[name] = try device.makeComputePipelineState(function: function)
@@ -99,7 +104,8 @@ actor MetalFilmPipeline {
     }
 
     /// Reuse the verified optical kernels in linear RGB, without the film/print color transform.
-    func processOptics(_ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline) async throws
+    func processOptics(_ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline)
+        async throws
         -> CGImage
     {
         let frame = try await renderBuffer(
@@ -113,8 +119,10 @@ actor MetalFilmPipeline {
     }
 
     private func renderBuffer(
-        _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline, stochastic: Bool = true,
-        seed: UInt64 = 0, autoExposureEV: Double? = nil, opticsOnly: Bool = false, grainMean: Bool = false,
+        _ input: [SIMD4<Float>], width: Int, height: Int, pipeline: FilmPipeline,
+        stochastic: Bool = true,
+        seed: UInt64 = 0, autoExposureEV: Double? = nil, opticsOnly: Bool = false,
+        grainMean: Bool = false,
         grainDensityOnly: Bool = false, grainNoiseReference: MTLBuffer? = nil
     ) async throws -> BufferFrame {
         let started = ProcessInfo.processInfo.systemUptime
@@ -123,7 +131,8 @@ actor MetalFilmPipeline {
             throw Failure.invalidShape
         }
         try Task.checkCancellation()
-        let pitch = pipeline.recipe.number("camera.film_format_mm") * 1000 / Double(max(width, height))
+        let pitch =
+            pipeline.recipe.number("camera.film_format_mm") * 1000 / Double(max(width, height))
         guard pitch.isFinite, pitch > 0 else { throw Failure.invalidShape }
         let color = pipeline.color
         let recipe = pipeline.recipe
@@ -134,7 +143,8 @@ actor MetalFilmPipeline {
             autoEV = autoExposureEV
         } else if recipe.flag("camera.auto_exposure") {
             autoEV = try color.autoExposureEV(
-                input.map { RGB(Double($0.x), Double($0.y), Double($0.z)) }, width: width, height: height)
+                input.map { RGB(Double($0.x), Double($0.y), Double($0.z)) }, width: width,
+                height: height)
         } else {
             autoEV = 0
         }
@@ -176,11 +186,13 @@ actor MetalFilmPipeline {
             e.dispatchThreads(
                 MTLSize(width: n, height: 1, depth: 1),
                 threadsPerThreadgroup: MTLSize(
-                    width: min(128, functions[name]!.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+                    width: min(128, functions[name]!.maxTotalThreadsPerThreadgroup), height: 1,
+                    depth: 1))
             e.endEncoding()
         }
-        func node(_ name: String, _ input: MTLBuffer, _ output: MTLBuffer, _ extras: [MTLBuffer] = []) throws
-        {
+        func node(
+            _ name: String, _ input: MTLBuffer, _ output: MTLBuffer, _ extras: [MTLBuffer] = []
+        ) throws {
             try Task.checkCancellation()
             let e = try encoder(name, [input, output] + model.buffers + [uniformBuffer])
             e.setBytes(&shape, length: 16, index: 10)
@@ -213,14 +225,16 @@ actor MetalFilmPipeline {
                     parameters: p, command: command)
             }
         }
-        func randomField(mean: Double, standardDeviation: Double, domain: UInt32, independent: Bool) throws
+        func randomField(mean: Double, standardDeviation: Double, domain: UInt32, independent: Bool)
+            throws
             -> MTLBuffer
         {
             let output = try pool.take()
             let e = try encoder("random_lognormal_image", [output])
             var parameters = SIMD2<Float>(Float(mean), Float(standardDeviation))
             var s = SIMD4<UInt32>(UInt32(count), domain, 0, 0)
-            var key = SIMD2<UInt32>(UInt32(truncatingIfNeeded: seed), UInt32(truncatingIfNeeded: seed >> 32))
+            var key = SIMD2<UInt32>(
+                UInt32(truncatingIfNeeded: seed), UInt32(truncatingIfNeeded: seed >> 32))
             var channels: UInt32 = independent ? 1 : 0
             e.setBytes(&parameters, length: 8, index: 1)
             e.setBytes(&s, length: 16, index: 2)
@@ -229,7 +243,8 @@ actor MetalFilmPipeline {
             dispatch(e, "random_lognormal_image")
             return output
         }
-        func finish(_ result: MTLBuffer, invalid: MTLBuffer, companion: MTLBuffer? = nil) async throws
+        func finish(_ result: MTLBuffer, invalid: MTLBuffer, companion: MTLBuffer? = nil)
+            async throws
             -> BufferFrame
         {
             try Task.checkCancellation()
@@ -257,11 +272,14 @@ actor MetalFilmPipeline {
             return BufferFrame(
                 image: result, companion: companion,
                 wallSeconds: ProcessInfo.processInfo.systemUptime - started,
-                gpuSeconds: tail === originalCommand ? max(0, tail.gpuEndTime - tail.gpuStartTime) : nil)
+                gpuSeconds: tail === originalCommand
+                    ? max(0, tail.gpuEndTime - tail.gpuStartTime) : nil)
         }
         // App RAW controls run before optical diffusion, emulsion exposure and development.
         if !recipe.tone.rawStage.isIdentity {
-            let values = RawAdjustments.parameters(recipe.tone.rawStage)
+            let values = RawAdjustments.parameters(
+                recipe.tone.rawStage,
+                normalizationEV: recipe.look.mode == .spektrafilm && !opticsOnly ? autoEV : 0)
             let e = try encoder("raw_adjust_image", [source])
             values.withUnsafeBytes { e.setBytes($0.baseAddress!, length: $0.count, index: 1) }
             var n = UInt32(count)
@@ -333,7 +351,8 @@ actor MetalFilmPipeline {
                     let image = try blur(raw, bounded(sigmaHalo * sqrt(Double(k))))
                     if k == 1 {
                         try mix(
-                            image, image, into: accumulated, aWeight: RGB(repeating: weights[k - 1] / total),
+                            image, image, into: accumulated,
+                            aWeight: RGB(repeating: weights[k - 1] / total),
                             bWeight: .zero)
                     } else {
                         try mix(
@@ -372,7 +391,9 @@ actor MetalFilmPipeline {
                 let gaussian = try blur(inhibition, RGB(repeating: radius / pitch))
                 let tail = try blur(
                     inhibition,
-                    RGB(repeating: recipe.number("film_render.dir_couplers.diffusion_tail_um") / pitch),
+                    RGB(
+                        repeating: recipe.number("film_render.dir_couplers.diffusion_tail_um")
+                            / pitch),
                     exponential: true)
                 let weight = recipe.number("film_render.dir_couplers.diffusion_tail_weight")
                 try mix(
@@ -394,7 +415,9 @@ actor MetalFilmPipeline {
             cleanGrain = clean
         }
         if stochastic && grain.active {
-            guard grain.simpleSublayers >= 1, grain.simpleSublayers <= 100 else { throw Failure.invalidShape }
+            guard grain.simpleSublayers >= 1, grain.simpleSublayers <= 100 else {
+                throw Failure.invalidShape
+            }
             let layerCount = grain.sublayers ? 3 : 1
             var layerImages = try (0..<layerCount).map { _ in try pool.take() }
             var maxima = Array(repeating: RGB.zero, count: 3)
@@ -411,7 +434,8 @@ actor MetalFilmPipeline {
                 minima = layers.maximum.map { $0 / total * grain.minimum }
                 maxima = (0..<3).map { layers.maximum[$0] + minima[$0] }
                 particles = try layers.particlesPerPixel(
-                    pixelSize: pitch, area: grain.area, scale: grain.scale, layerScale: grain.layerScale)
+                    pixelSize: pitch, area: grain.area, scale: grain.scale,
+                    layerScale: grain.layerScale)
                 curveCount = layers.interpolation[0].axis.count
                 for curve in layers.interpolation {
                     for i in curve.axis.indices {
@@ -430,17 +454,22 @@ actor MetalFilmPipeline {
                 curveCount = 1
                 layerCurves = [.zero]
             }
-            let configuration = try buffer((maxima + particles + minima + [grain.uniformity]).map(vector))
+            let configuration = try buffer(
+                (maxima + particles + minima + [grain.uniformity]).map(vector))
             let curves = try buffer(layerCurves)
             let grainKernel = grainMean ? "grain_layers_mean_image" : "grain_layers_image"
             let e = try encoder(
                 grainKernel,
-                [density, layerImages[0], layerImages.last!, layerImages.last!, curves, configuration])
+                [
+                    density, layerImages[0], layerImages.last!, layerImages.last!, curves,
+                    configuration,
+                ])
             if layerCount == 3 { e.setBuffer(layerImages[1], offset: 0, index: 2) }
             var s = SIMD4<UInt32>(
                 UInt32(count), UInt32(curveCount), grain.sublayers ? 1 : 0,
                 UInt32(grain.simpleSublayers) << 1 | (pipeline.film.positive ? 1 : 0))
-            var key = SIMD2<UInt32>(UInt32(truncatingIfNeeded: seed), UInt32(truncatingIfNeeded: seed >> 32))
+            var key = SIMD2<UInt32>(
+                UInt32(truncatingIfNeeded: seed), UInt32(truncatingIfNeeded: seed >> 32))
             var offset = SIMD2<UInt32>.zero
             e.setBytes(&s, length: 16, index: 6)
             if !grainMean {
@@ -476,7 +505,8 @@ actor MetalFilmPipeline {
                     layerImages.last!, micro ?? layerImages[0], density,
                 ])
             var minimum = vector(grain.minimum)
-            var grainShape = SIMD4<UInt32>(UInt32(count), UInt32(layerCount), micro == nil ? 0 : 1, 0)
+            var grainShape = SIMD4<UInt32>(
+                UInt32(count), UInt32(layerCount), micro == nil ? 0 : 1, 0)
             finish.setBytes(&minimum, length: 16, index: 5)
             finish.setBytes(&grainShape, length: 16, index: 6)
             dispatch(finish, "finish_grain_image")
@@ -500,8 +530,12 @@ actor MetalFilmPipeline {
             return try await finish(density, invalid: invalid)
         }
         if let mean = grainNoiseReference, let clean = cleanGrain {
-            try mix(density, mean, into: density, aWeight: RGB(repeating: 1), bWeight: RGB(repeating: -1))
-            try mix(clean, density, into: density, aWeight: RGB(repeating: 1), bWeight: RGB(repeating: 1))
+            try mix(
+                density, mean, into: density, aWeight: RGB(repeating: 1),
+                bWeight: RGB(repeating: -1))
+            try mix(
+                clean, density, into: density, aWeight: RGB(repeating: 1),
+                bWeight: RGB(repeating: 1))
         }
         // Both branches share decoding, exposure, halation, development and couplers.
         // Only the print/scan tail repeats when monochrome grain is enabled.
@@ -520,7 +554,8 @@ actor MetalFilmPipeline {
                 let mean = recipe.number("print_render.glare.percent")
                 if mean > 0 {
                     var field = try randomField(
-                        mean: mean, standardDeviation: mean * recipe.number("print_render.glare.roughness"),
+                        mean: mean,
+                        standardDeviation: mean * recipe.number("print_render.glare.roughness"),
                         domain: 1024, independent: false)
                     let radius = recipe.number("print_render.glare.blur")
                     if radius > 0 {
@@ -571,7 +606,8 @@ actor MetalFilmPipeline {
             return try await finish(density, invalid: invalid, companion: clean)
         }
         if let clean = cleanGrain {
-            let e = try encoder("encode_monochrome_grain", [density, clean, uniformBuffer, invalid])
+            let e = try encoder(
+                "encode_monochrome_grain", [density, clean, uniformBuffer, invalid])
             var n = UInt32(count)
             e.setBytes(&n, length: 4, index: 4)
             dispatch(e, "encode_monochrome_grain")
@@ -641,7 +677,8 @@ actor MetalFilmPipeline {
     private func buffer<T>(_ values: [T]) throws -> MTLBuffer {
         guard
             let result = values.withUnsafeBytes({
-                device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+                device.makeBuffer(
+                    bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
             })
         else { throw Failure.allocation }
         return result

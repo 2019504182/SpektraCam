@@ -8,6 +8,25 @@ nonisolated struct PhotoMetadata: Codable, Equatable, Sendable {
     var colorSpace = "Unknown profile"
     var camera: String?
     var lens: String?
+    /// Compact display only. Preserve the complete EXIF string in `lens`.
+    var lensDisplayName: String? {
+        guard let lens else { return nil }
+        let cleaned = lens.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.lowercased().contains("iphone") else { return cleaned }
+        let expression = try? NSRegularExpression(
+            pattern: #"([0-9.]+)\s*mm\s*f/([0-9.]+)"#, options: .caseInsensitive)
+        guard
+            let match = expression?.firstMatch(
+                in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)),
+            let focal = Range(match.range(at: 1), in: cleaned),
+            let aperture = Range(match.range(at: 2), in: cleaned)
+        else {
+            return cleaned.replacingOccurrences(of: camera ?? "", with: "").trimmingCharacters(
+                in: .whitespaces)
+        }
+        let facing = cleaned.localizedCaseInsensitiveContains("front") ? "Front" : "Rear"
+        return "\(facing) · \(cleaned[focal]) mm ƒ/\(cleaned[aperture])"
+    }
     var exposure: String?
     var width = 0
     var height = 0
@@ -44,7 +63,8 @@ nonisolated struct PhotoMetadata: Codable, Equatable, Sendable {
             longitude = gps[kCGImagePropertyGPSLongitudeRef] as? String == "W" ? -lon : lon
         }
         var parts = [String]()
-        if let seconds = exif?[kCGImagePropertyExifExposureTime] as? Double, seconds.isFinite, seconds >= 1e-9
+        if let seconds = exif?[kCGImagePropertyExifExposureTime] as? Double, seconds.isFinite,
+            seconds >= 1e-9
         {
             parts.append(
                 seconds < 1

@@ -4,7 +4,7 @@
       "value" : {
         "linear-gradient" : [
           "display-p3:1.00000,0.98864,0.98864,1.00000",
-          "display-p3:0.90403,0.89376,0.89376,1.00000"
+          "display-p3:0.94429,0.94429,0.94429,1.00000"
         ],
         "orientation" : {
           "start" : {
@@ -42,31 +42,52 @@
     {
       "layers" : [
         {
-          "blend-mode" : "overlay",
+          "blend-mode" : "normal",
           "fill" : {
-            "solid" : "display-p3:0.25889,0.55457,0.87325,1.00000"
+            "solid" : "display-p3:1.00000,0.85459,0.35697,1.00000"
           },
           "hidden" : false,
           "image-name" : "01-blue-outlined.svg",
-          "name" : "01-blue-outlined"
+          "name" : "01-Y-outlined",
+          "position" : {
+            "scale" : 1.05,
+            "translation-in-points" : [
+              -13,
+              -7
+            ]
+          }
         },
         {
-          "blend-mode" : "overlay",
+          "blend-mode" : "normal",
           "fill" : {
-            "solid" : "display-p3:0.34878,0.74193,0.53925,1.00000"
+            "solid" : "display-p3:0.82272,0.36821,0.85472,1.00000"
           },
           "hidden" : false,
           "image-name" : "02-green-outlined.svg",
-          "name" : "02-green-outlined"
+          "name" : "02-M-outlined",
+          "position" : {
+            "scale" : 1.05,
+            "translation-in-points" : [
+              -13,
+              -7
+            ]
+          }
         },
         {
-          "blend-mode" : "overlay",
+          "blend-mode" : "normal",
           "fill" : {
-            "solid" : "display-p3:0.79675,0.25375,0.17571,1.00000"
+            "solid" : "display-p3:0.55309,0.85063,0.91019,1.00000"
           },
           "hidden" : false,
           "image-name" : "03-red-outlined.svg",
-          "name" : "03-red-outlined"
+          "name" : "03-C-outlined",
+          "position" : {
+            "scale" : 1.05,
+            "translation-in-points" : [
+              -13,
+              -7
+            ]
+          }
         }
       ],
       "shadow" : {

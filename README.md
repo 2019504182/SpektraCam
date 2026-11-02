@@ -1,6 +1,6 @@
 # SpektraCam
 
-**Version 0.2.1**
+**Version 0.2.2**
 
 SpektraCam is a photo editor for iPhone.
 It has a local library for imported photos.
@@ -104,6 +104,14 @@ python3 Scripts/core-checks.py lut preview --input /path/first.cube /path/second
 
 The pinned Python reference has 189 passed tests and four known test failures.
 The native tests use the reference data in `Reference/Fixtures`.
+
+## Changes in 0.2.2
+
+Use native photo paging. Fix cancelled swipes and zoom-to-fit paging.
+Remove slider snapping. Keep default marks, reset and haptics. Keep one undo step per drag.
+Shorten iPhone lens text and update the app icon.
+Use a metered, scene-referred tone curve for new adjustments. Keep HDR headroom and older saved looks.
+Check 11 Indigo JPEGs, genuine CR2/ProRAW/Ricoh DNG, RAW order and the native reference cases.
 
 ## Changes in 0.2.1
 

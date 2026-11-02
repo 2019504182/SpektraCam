@@ -10,15 +10,15 @@ nonisolated enum RawAdjustments {
         guard
             [tone.exposureEV, tone.contrast, tone.pivot, tone.shadows, tone.highlights].allSatisfy(
                 \.isFinite),
-            (1...4).contains(tone.algorithm), (-10...10).contains(tone.exposureEV),
+            (1...5).contains(tone.algorithm), (-10...10).contains(tone.exposureEV),
             (0.25...2).contains(tone.contrast), (0...1).contains(tone.pivot),
             (-2...2).contains(tone.shadows), (-10...10).contains(tone.highlights)
         else { throw Failure.parameters }
     }
-    static func parameters(_ tone: EditRecipe.Tone) -> [Float] {
+    static func parameters(_ tone: EditRecipe.Tone, normalizationEV: Double = 0) -> [Float] {
         [
             Float(tone.contrast), Float(tone.pivot), Float(tone.shadows), Float(tone.highlights),
-            Float(tone.exposureEV), Float(tone.algorithm), 0, 0,
+            Float(tone.exposureEV), Float(tone.algorithm), Float(normalizationEV), 0,
         ]
     }
     static let shader = """
@@ -39,8 +39,23 @@ nonisolated enum RawAdjustments {
             float t=(1-x)/(1-pivot), shifted=algorithm<1.5f ? t-p.w*t*(1-t)*(1-t) : t;
             return 1-(1-pivot)*pow(shifted,p.x);
         }
-        float3 applyRaw(float3 rgb, constant float4 *p) {
+        float3 applyRaw(float3 rgb, constant float4 *p, float normalizationEV) {
             rgb*=exp2(p[1].x);
+            if(p[1].y>=4.5f) {
+                // A scene-referred luminance curve: no SDR white cutoff, no per-channel hue shifts.
+                float y=dot(rgb,float3(0.2126f,0.7152f,0.0722f));
+                if(y<=1e-10f) return rgb;
+                float x=y*exp2(normalizationEV);
+                float width=max(1.0f,abs(p[0].z-p[0].w)/4.0f);
+                float odds=exp2(log2(x/0.18f)/width);
+                float highlightWeight=odds/(1+odds);
+                float stops=p[0].z*(1-highlightWeight)+p[0].w*highlightWeight;
+                float lifted=x*exp2(stops);
+                float pivot=rawDecode(clamp(p[0].y,0.0001f,0.9999f));
+                float distance=log2(max(lifted,1e-20f)/pivot);
+                float bend=(p[0].x-1.0f)*4.0f*tanh(distance/4.0f);
+                return rgb*exp2(stops+bend);
+            }
             bool legacy=p[1].y<1.5f;
             if(!legacy && p[0].w!=0) {
                 float y=dot(rgb,float3(0.2126f,0.7152f,0.0722f));
@@ -59,7 +74,7 @@ nonisolated enum RawAdjustments {
     static let bufferKernel = """
         kernel void raw_adjust_image(device float4 *pixels [[buffer(0)]], constant float4 *p [[buffer(1)]],
                                      constant uint &n [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-            if(i<n) pixels[i]=float4(applyRaw(pixels[i].rgb,p),1);
+            if(i<n) pixels[i]=float4(applyRaw(pixels[i].rgb,p,p[1].z),1);
         }
         """
 }

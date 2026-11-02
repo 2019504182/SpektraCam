@@ -13,15 +13,22 @@ struct ParameterControl: View {
                 definition.title,
                 isOn: Binding(
                     get: { session.recipe.flag(definition.id) },
-                    set: { value in session.update(key: definition.id) { $0.flags[definition.id] = value } })
+                    set: { value in
+                        session.update(key: definition.id) { $0.flags[definition.id] = value }
+                    })
             )
             .accessibilityIdentifier(definition.id)
         } else if definition.defaultChoice != nil {
             Menu {
-                Picker(definition.title, selection: Binding(
-                    get: { session.recipe.choice(definition.id) },
-                    set: { value in session.update(key: definition.id) { $0.choices[definition.id] = value } }
-                )) {
+                Picker(
+                    definition.title,
+                    selection: Binding(
+                        get: { session.recipe.choice(definition.id) },
+                        set: { value in
+                            session.update(key: definition.id) { $0.choices[definition.id] = value }
+                        }
+                    )
+                ) {
                     ForEach(definition.options, id: \.self) {
                         Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0)
                     }
@@ -30,8 +37,12 @@ struct ParameterControl: View {
                 HStack(spacing: 8) {
                     Text(definition.title).foregroundStyle(.primary)
                     Spacer(minLength: 4)
-                    Text(session.recipe.choice(definition.id).replacingOccurrences(of: "_", with: " ").capitalized)
-                        .foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                    Text(
+                        session.recipe.choice(definition.id).replacingOccurrences(
+                            of: "_", with: " "
+                        ).capitalized
+                    )
+                    .foregroundStyle(.secondary).multilineTextAlignment(.trailing)
                     Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
                 }.font(.caption).frame(minHeight: 32).contentShape(.rect)
             }
@@ -54,8 +65,10 @@ struct ParameterControl: View {
                 step: isScatterMix ? 1 : definition.step,
                 minimum: definition.minimum, maximum: isScatterMix ? 100 : definition.maximum,
                 unit: isScatterMix ? "%" : definition.unit, identifier: definition.id,
-                defaultValue: session.recipe.defaultNumber(definition.id) * (isScatterMix ? 100 : 1),
-                fillOrigin: isScatterMix || definition.id == "film_render.halation.halation_amount" ? 0 : nil,
+                defaultValue: session.recipe.defaultNumber(definition.id)
+                    * (isScatterMix ? 100 : 1),
+                fillOrigin: isScatterMix || definition.id == "film_render.halation.halation_amount"
+                    ? 0 : nil,
                 onEditingChanged: { session.setInteraction(key: definition.id, active: $0) })
         }
     }
@@ -72,7 +85,6 @@ struct NumericControl: View {
     var identifier = ""
     var defaultValue = 0.0
     var fillOrigin: Double? = nil
-    var snapsToDefault = true
     var onEditingChanged: (Bool) -> Void = { _ in }
     @State private var showEntry = false
 
@@ -94,7 +106,7 @@ struct NumericControl: View {
             }
             DefaultSlider(
                 value: $value, range: effectiveRange, step: step, defaultValue: defaultValue,
-                title: title, identifier: identifier, fillOrigin: fillOrigin, snapsToDefault: snapsToDefault,
+                title: title, identifier: identifier, fillOrigin: fillOrigin,
                 onEditingChanged: onEditingChanged)
         }
         .sheet(isPresented: $showEntry) {
@@ -130,7 +142,6 @@ struct DefaultSlider: UIViewRepresentable {
     let title: String
     let identifier: String
     var fillOrigin: Double? = nil
-    var snapsToDefault = true
     var onEditingChanged: (Bool) -> Void = { _ in }
     private var bounds: ClosedRange<Double> {
         min(range.lowerBound, defaultValue)...max(range.upperBound, defaultValue)
@@ -142,12 +153,17 @@ struct DefaultSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> UISlider {
         let slider = PrecisionSlider()
         context.coordinator.slider = slider
-        slider.addTarget(context.coordinator, action: #selector(Coordinator.changed), for: .valueChanged)
+        slider.adjustAccessibility = { [weak coordinator = context.coordinator] direction in
+            coordinator?.adjustAccessibility(direction)
+        }
+        slider.addTarget(
+            context.coordinator, action: #selector(Coordinator.changed), for: .valueChanged)
         slider.addTarget(context.coordinator, action: #selector(Coordinator.began), for: .touchDown)
         slider.addTarget(
             context.coordinator, action: #selector(Coordinator.ended),
             for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        let reset = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.reset))
+        let reset = UITapGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.reset))
         reset.numberOfTapsRequired = 2
         reset.cancelsTouchesInView = false
         reset.delaysTouchesEnded = false
@@ -170,20 +186,12 @@ struct DefaultSlider: UIViewRepresentable {
         // Keep UIKit and its tick configuration in the same normalized range.
         let configuration = [
             bounds.lowerBound, bounds.upperBound, defaultValue, fillOrigin ?? defaultValue,
-            snapsToDefault ? 1 : 0,
         ]
         if context.coordinator.configuration != configuration {
-            slider.trackConfiguration =
-                snapsToDefault
-                ? .init(
-                    allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue),
-                    ticks: [.init(position: position(defaultValue))])
-                : .init(
-                    allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue), ticks: []
-                )
-            if let precise = slider as? PrecisionSlider {
-                precise.defaultTick = snapsToDefault ? nil : position(defaultValue)
-            }
+            slider.trackConfiguration = .init(
+                allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue),
+                ticks: [])
+            (slider as? PrecisionSlider)?.defaultTick = position(defaultValue)
             context.coordinator.configuration = configuration
         }
         slider.minimumValue = 0
@@ -196,6 +204,9 @@ struct DefaultSlider: UIViewRepresentable {
     /// UIKit couples configured ticks to magnetic stops. A marker view keeps fine straightening continuous.
     final class PrecisionSlider: UISlider {
         var defaultTick: Float? { didSet { setNeedsLayout() } }
+        var adjustAccessibility: ((Int) -> Void)?
+        override func accessibilityIncrement() { adjustAccessibility?(1) }
+        override func accessibilityDecrement() { adjustAccessibility?(-1) }
         private let marker = UIView()
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -221,9 +232,16 @@ struct DefaultSlider: UIViewRepresentable {
         weak var slider: UISlider?
         private let feedback = UISelectionFeedbackGenerator()
         private var interacting = false
+        private var defaultSide = 0
+        private func side(of value: Double) -> Int {
+            value < parent.defaultValue ? -1 : (value > parent.defaultValue ? 1 : 0)
+        }
         init(_ parent: DefaultSlider) { self.parent = parent }
         @objc func began() {
+            guard !interacting else { return }
             interacting = true
+            defaultSide = side(of: parent.value)
+            feedback.prepare()
             parent.onEditingChanged(true)
         }
         @objc func ended() {
@@ -231,15 +249,25 @@ struct DefaultSlider: UIViewRepresentable {
             parent.onEditingChanged(false)
         }
         @objc func changed(_ slider: UISlider) {
-            let accessibilityChange = !interacting && !slider.isTracking
-            if accessibilityChange { began() }
             let raw =
                 parent.bounds.lowerBound + Double(slider.value)
                 * (parent.bounds.upperBound - parent.bounds.lowerBound)
+            let newSide = side(of: raw)
+            if newSide != 0 && defaultSide != 0 && newSide != defaultSide {
+                feedback.selectionChanged()
+                feedback.prepare()
+            }
+            if newSide != 0 { defaultSide = newSide }
+            parent.value = min(max(raw, parent.bounds.lowerBound), parent.bounds.upperBound)
+        }
+        func adjustAccessibility(_ direction: Int) {
+            guard slider?.isEnabled == true else { return }
+            began()
             parent.value = min(
-                max((raw / parent.step).rounded() * parent.step, parent.bounds.lowerBound),
+                max(parent.value + Double(direction) * parent.step, parent.bounds.lowerBound),
                 parent.bounds.upperBound)
-            if accessibilityChange { ended() }
+            slider?.setValue(parent.position(parent.value), animated: false)
+            ended()
         }
         @objc func reset() {
             guard slider?.isEnabled == true else { return }
@@ -273,7 +301,8 @@ private struct NumericEntry: View {
 
     private var parsed: Double? {
         let separator = Locale.current.decimalSeparator ?? "."
-        guard let number = Double(text.replacingOccurrences(of: separator, with: ".")), number.isFinite,
+        guard let number = Double(text.replacingOccurrences(of: separator, with: ".")),
+            number.isFinite,
             minimum.map({ number >= $0 }) ?? true,
             maximum.map({ number <= $0 }) ?? true,
             !integer || number.rounded() == number
@@ -355,7 +384,9 @@ struct EffectSection: View {
                 title,
                 isOn: Binding(
                     get: { session.recipe.flag(prefix + ".active") },
-                    set: { value in session.update(key: prefix) { $0.flags[prefix + ".active"] = value } })
+                    set: { value in
+                        session.update(key: prefix) { $0.flags[prefix + ".active"] = value }
+                    })
             )
             .accessibilityIdentifier(prefix + ".active")
             VStack(alignment: .leading, spacing: 12) {
@@ -378,7 +409,8 @@ struct EffectDetails: View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 16) {
                 ParameterFields(session: session, prefix: prefix, excluding: ["active"] + prominent)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12).padding(.trailing, 8)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12).padding(
+                .trailing, 8)
         } label: {
             Text("Details").accessibilityIdentifier(prefix + ".details")
         }.disabled(!session.recipe.flag(prefix + ".active"))

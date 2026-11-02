@@ -44,8 +44,10 @@ struct PhotoInfoPanel: View {
                     onInteraction?()
                 } label: {
                     VStack(spacing: 3) {
-                        HistogramChart(histogram: histogram, channels: channels).frame(width: 112, height: 32)
-                            .overlay { Rectangle().strokeBorder(.secondary, lineWidth: 0.5) }
+                        HistogramChart(histogram: histogram, channels: channels).frame(
+                            width: 112, height: 32
+                        )
+                        .overlay { Rectangle().strokeBorder(.secondary, lineWidth: 0.5) }
                         Text(channels ? "RGB" : "Luma").font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.secondary)
                     }.frame(width: 112, height: 44).contentShape(.rect)
@@ -62,13 +64,20 @@ struct PhotoInfoPanel: View {
                         LabeledContent("Location", value: location ?? "Not available")
                         if let date = metadata.capturedAt {
                             LabeledContent(
-                                "Taken", value: date.formatted(date: .abbreviated, time: .shortened))
+                                "Taken", value: date.formatted(date: .abbreviated, time: .shortened)
+                            )
                         }
                         if let camera = metadata.camera {
-                            LabeledContent("Camera", value: camera.trimmingCharacters(in: .whitespaces))
+                            LabeledContent(
+                                "Camera", value: camera.trimmingCharacters(in: .whitespaces))
                         }
-                        if let lens = metadata.lens { LabeledContent("Lens", value: lens) }
-                        if let exposure = metadata.exposure { LabeledContent("Exposure", value: exposure) }
+                        if let lens = metadata.lensDisplayName {
+                            LabeledContent("Lens", value: lens).accessibilityValue(
+                                metadata.lens ?? lens)
+                        }
+                        if let exposure = metadata.exposure {
+                            LabeledContent("Exposure", value: exposure)
+                        }
                         LabeledContent("Format", value: metadata.sizeLine)
                         LabeledContent("Color space", value: metadata.colorSpace)
                     }.font(.subheadline).padding(.horizontal, 12).padding(.bottom, 12)

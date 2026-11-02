@@ -19,7 +19,19 @@ nonisolated enum ToneRenderer {
     /// Versioned code-value curve; older grades retain their original formula.
     static func curve(_ value: Double, tone: EditRecipe.Tone) -> Double {
         let p = min(max(tone.pivot, 0.0001), 0.9999)
-        if value <= 0 || value >= 1 { return value }
+        if value <= 0 || (value >= 1 && tone.algorithm < 5) { return value }
+        if tone.algorithm >= 5 {
+            let x = value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            let pivot = p <= 0.04045 ? p / 12.92 : pow((p + 0.055) / 1.055, 2.4)
+            let width = max(1, abs(tone.shadows - tone.highlights) / 4)
+            let odds = exp2(log2(x / 0.18) / width)
+            let weight = odds / (1 + odds)
+            let stops = tone.shadows * (1 - weight) + tone.highlights * weight
+            let lifted = x * exp2(stops)
+            let bend = (tone.contrast - 1) * 4 * tanh(log2(lifted / pivot) / 4)
+            let output = x * exp2(stops + bend)
+            return output <= 0.0031308 ? output * 12.92 : 1.055 * pow(output, 1 / 2.4) - 0.055
+        }
         if tone.algorithm >= 4 {
             let lifted = value <= p ? p * pow(value / p, exp2(-tone.shadows)) : value
             if tone.contrast == 1 { return lifted }
@@ -42,7 +54,7 @@ nonisolated enum ToneRenderer {
     static func working(
         _ image: CGImage, tone: EditRecipe.Tone,
         luts: [CubeLUT.Application] = [], residual: (CGImage, CGImage)? = nil,
-        monochromeResidual: Bool = false
+        monochromeResidual: Bool = false, normalizationEV: Double = 0
     ) throws -> CGImage {
         try RawAdjustments.validate(tone)
         guard luts.count <= 2, luts.allSatisfy({ $0.mix.isFinite && (0...1).contains($0.mix) })
@@ -54,17 +66,17 @@ nonisolated enum ToneRenderer {
         if max(image.width, image.height) > 2048 {
             return try tiledWorking(
                 image, tone: tone, luts: luts, residual: residual,
-                monochromeResidual: monochromeResidual)
+                monochromeResidual: monochromeResidual, normalizationEV: normalizationEV)
         }
         return try gpu.render(
             image, tone: tone, luts: luts, residual: residual,
-            monochromeResidual: monochromeResidual)
+            monochromeResidual: monochromeResidual, normalizationEV: normalizationEV)
     }
     /// Grade is pointwise: strips preserve the exact LUT/tone/noise math without full-frame textures.
     static func tiledWorking(
         _ image: CGImage, tone: EditRecipe.Tone,
         luts: [CubeLUT.Application] = [], residual: (CGImage, CGImage)? = nil,
-        monochromeResidual: Bool = false
+        monochromeResidual: Bool = false, normalizationEV: Double = 0
     ) throws -> CGImage {
         guard let gpu else { throw Failure.render }
         var pixels = Data(count: image.width * image.height * 16)
@@ -86,7 +98,7 @@ nonisolated enum ToneRenderer {
                     }
                     let graded = try gpu.render(
                         strip, tone: tone, luts: luts, residual: noise,
-                        monochromeResidual: monochromeResidual)
+                        monochromeResidual: monochromeResidual, normalizationEV: normalizationEV)
                     context.render(
                         CIImage(cgImage: graded),
                         toBitmap: bytes.baseAddress!.advanced(by: y * image.width * 16),
@@ -175,7 +187,7 @@ nonisolated private final class GradeKernel: @unchecked Sendable {
     func render(
         _ image: CGImage, tone: EditRecipe.Tone, luts: [CubeLUT.Application],
         residual: (CGImage, CGImage)?,
-        monochromeResidual: Bool
+        monochromeResidual: Bool, normalizationEV: Double = 0
     ) throws -> CGImage {
         lock.lock()
         defer {
@@ -262,6 +274,7 @@ nonisolated private final class GradeKernel: @unchecked Sendable {
                 parameters += [0, 0, 0, 0, 1, 1, 1, 2]
             }
         }
+        parameters += [Float(normalizationEV), 0, 0, 0]
         lutTextures = activeTextures
         invalid.contents().storeBytes(of: UInt32(0), as: UInt32.self)
         guard let encoder = command.makeComputeCommandEncoder() else {
@@ -358,7 +371,7 @@ nonisolated private final class GradeKernel: @unchecked Sendable {
                               texture3d<float,access::read> second [[texture(5)]],
                               constant float4 *p [[buffer(0)]], device atomic_uint *invalid [[buffer(1)]], uint2 id [[thread_position_in_grid]]) {
                 if(id.x>=source.get_width() || id.y>=source.get_height()) return;
-                float3 rgb=applyRaw(source.read(id).rgb,p);
+                float3 rgb=applyRaw(source.read(id).rgb,p,p[6].x);
                 rgb=look(rgb,first,p[2],p[3]); rgb=look(rgb,second,p[4],p[5]);
                 if(p[1].w!=0) {
                     float3 noise=dirty.read(id).rgb-clean.read(id).rgb;

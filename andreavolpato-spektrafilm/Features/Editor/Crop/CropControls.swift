@@ -39,19 +39,22 @@ struct CropControls: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(common) { aspect in
-                            Button(aspect.title) { crop.setAspect(aspect, imageAspect: imageAspect) }
-                                .buttonStyle(.bordered)
-                                .buttonBorderShape(.capsule)
-                                .tint(crop.aspect == aspect ? Color.accentColor : .secondary)
-                                .accessibilityAddTraits(crop.aspect == aspect ? .isSelected : [])
-                                .accessibilityIdentifier("crop.ratio.\(aspect.id)")
+                            Button(aspect.title) {
+                                crop.setAspect(aspect, imageAspect: imageAspect)
+                            }
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(crop.aspect == aspect ? Color.accentColor : .secondary)
+                            .accessibilityAddTraits(crop.aspect == aspect ? .isSelected : [])
+                            .accessibilityIdentifier("crop.ratio.\(aspect.id)")
                         }
                     }
                 }.scrollIndicators(.hidden)
                 Menu("More", systemImage: "ellipsis") {
                     ForEach(
                         CropAspect.allCases.filter {
-                            !common.contains($0) && ![.nineSixteen, .twoThree, .threeFour].contains($0)
+                            !common.contains($0)
+                                && ![.nineSixteen, .twoThree, .threeFour].contains($0)
                         }
                     ) { aspect in
                         Button(aspect.title) { crop.setAspect(aspect, imageAspect: imageAspect) }
@@ -90,7 +93,7 @@ struct CropControls: View {
                 }.font(.subheadline)
                 DefaultSlider(
                     value: $geometry.straightenDegrees, range: -45...45, step: 0.1,
-                    title: "Straighten", identifier: "crop.straighten", snapsToDefault: false,
+                    title: "Straighten", identifier: "crop.straighten",
                     onEditingChanged: onStraightenEditingChanged
                 )
                 .accessibilityLabel("Straighten")
@@ -109,14 +112,17 @@ struct CropControls: View {
         Group {
             transform("Rotate Left", symbol: "rotate.left", action: rotateLeft)
             transform(
-                "Flip Horizontal", symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right",
+                "Flip Horizontal",
+                symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right",
                 action: flipHorizontal)
             transform(
                 "Flip Vertical", symbol: "arrow.up.and.down.righttriangle.up.righttriangle.down",
                 action: flipVertical)
         }
     }
-    private func transform(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+    private func transform(_ title: String, symbol: String, action: @escaping () -> Void)
+        -> some View
+    {
         Button(action: action) { Image(systemName: symbol).frame(width: 24, height: 24) }
             .accessibilityLabel(title).buttonStyle(.glass).buttonBorderShape(.circle)
     }

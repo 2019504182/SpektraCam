@@ -10,7 +10,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
     }
     /// RAW controls precede Develop. Whole-photo monochrome is applied at the output.
     struct Tone: Codable, Equatable, Sendable {
-        var algorithm = 4
+        var algorithm = 5
         var exposureEV = 0.0
         var contrast = 1.0
         var pivot = 0.35
@@ -43,7 +43,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
             shadows = try v.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
             highlights = try v.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
             monochrome = try v.decodeIfPresent(Bool.self, forKey: .monochrome) ?? false
-            guard (1...4).contains(algorithm) else {
+            guard (1...5).contains(algorithm) else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .algorithm, in: v, debugDescription: "Unsupported tone algorithm")
             }
@@ -83,7 +83,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
 
     init() {}
     enum CodingKeys: String, CodingKey {
-        case source, tone, look, monochromeGrain, mix, version, upstreamRevision, filmID, printID, scanFilm,
+        case source, tone, look, monochromeGrain, mix, version, upstreamRevision, filmID, printID,
+            scanFilm,
             crop,
             geometry, temperature,
             numbers,
@@ -108,7 +109,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
         printID = try values.decodeIfPresent(String.self, forKey: .printID) ?? printID
         scanFilm = try values.decodeIfPresent(Bool.self, forKey: .scanFilm) ?? false
         crop = try values.decodeIfPresent(CropSelection.self, forKey: .crop) ?? CropSelection()
-        geometry = try values.decodeIfPresent(ImageGeometry.self, forKey: .geometry) ?? ImageGeometry()
+        geometry =
+            try values.decodeIfPresent(ImageGeometry.self, forKey: .geometry) ?? ImageGeometry()
         temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
         numbers = try values.decodeIfPresent([String: Double].self, forKey: .numbers) ?? [:]
         flags = try values.decodeIfPresent([String: Bool].self, forKey: .flags) ?? [:]
@@ -136,7 +138,8 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
     /// A new stock uses its natural route; a print choice is retained for later printing.
     mutating func selectFilm(_ stock: FilmStock) {
         guard stock.id != filmID else { return }
-        let resetKeys = Set(StockDefaults.numbers[filmID]?.keys.map { $0 } ?? []).union(stock.defaults.keys)
+        let resetKeys = Set(StockDefaults.numbers[filmID]?.keys.map { $0 } ?? []).union(
+            stock.defaults.keys)
         filmID = stock.id
         for key in resetKeys { numbers.removeValue(forKey: key) }
         scanFilm = stock.isPositive
@@ -186,7 +189,8 @@ nonisolated struct ParameterDefinition: Identifiable, Sendable {
     static func flag(_ id: String, _ title: String, _ value: Bool) -> Self {
         .init(id: id, title: title, defaultFlag: value)
     }
-    static func choice(_ id: String, _ title: String, _ value: String, _ options: [String]) -> Self {
+    static func choice(_ id: String, _ title: String, _ value: String, _ options: [String]) -> Self
+    {
         .init(id: id, title: title, defaultChoice: value, options: options)
     }
     static let byGroup = Dictionary(grouping: catalog) { definition in
