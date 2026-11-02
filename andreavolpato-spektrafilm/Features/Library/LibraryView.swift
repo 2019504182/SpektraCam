@@ -17,6 +17,7 @@ struct LibraryView: View {
     @State private var confirmDelete = false
     @State private var confirmRevert = false
     @State private var showLUTs = false
+    @State private var showInformation = false
     @State private var scrollRevision = 0
     private enum ImportSource { case photos, files }
     private var visible: [LibraryPhoto] { library.photos.filter { filter.includes($0) } }
@@ -44,11 +45,18 @@ struct LibraryView: View {
                     .padding(.vertical, 6).frame(maxWidth: .infinity)
                     .accessibilityIdentifier("library.count")
                 }
+                .sheet(isPresented: $showInformation) { AppInformationView() }
                 .sheet(isPresented: $showLUTs) { LUTLibraryView(library: library) }
                 .navigationTitle("Library").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         CameraButton()
+                    }
+                    ToolbarSpacer(.fixed, placement: .topBarLeading)
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("About and Settings", systemImage: "info") { showInformation = true }
+                            .labelStyle(.iconOnly).buttonBorderShape(.circle)
+                            .accessibilityIdentifier("library.info")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
@@ -242,7 +250,7 @@ struct LibraryView: View {
                 }
             }
             if working && !progress.isEmpty {
-                ProgressView(progress).padding().background(.regularMaterial, in: .capsule)
+                ImportProgress(text: progress)
             }
         }
         .background(PhotoTheme.canvas)

@@ -115,7 +115,7 @@ struct EditorView: View {
         .onDisappear { session.cancelRendering() }
         .onChange(of: activeTool) { _, _ in
             showOriginal = false
-            panelExpanded = activeTool == .develop
+            panelExpanded = false
         }
         .alert("Reset all edits?", isPresented: $showResetConfirmation) {
             Button("Reset All Edits", role: .destructive) {
@@ -150,8 +150,11 @@ struct EditorView: View {
     private var canvas: some View {
         ZStack {
             if activeTool == .crop {
-                CropCanvas(image: session.geometryImage, selection: session.binding(\.crop, key: "crop"))
-                    .allowsHitTesting(!session.isRendering)
+                CropCanvas(
+                    image: session.geometryImage, selection: session.binding(\.crop, key: "crop"),
+                    geometry: session.binding(\.geometry, key: "crop.framing")
+                )
+                .allowsHitTesting(!session.isRendering)
             } else {
                 PhotoViewport(
                     image: showOriginal ? UIImage(cgImage: session.photo.preview) : session.displayImage,
@@ -381,8 +384,8 @@ private struct PanelTabs<Selection: Hashable & RawRepresentable>: View where Sel
     }
     private func tab(_ option: (Selection, String)) -> some View {
         Button(option.1) { selection = option.0 }
-            .font(.caption.weight(.semibold)).lineLimit(1).fixedSize()
-            .frame(minHeight: 36)
+            .font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
+            .frame(minHeight: 38)
             .accessibilityShowsLargeContentViewer { Text(option.1) }
     }
 }

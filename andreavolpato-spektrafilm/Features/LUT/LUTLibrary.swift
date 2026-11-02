@@ -12,9 +12,19 @@ nonisolated struct InstalledLUT: Codable, Identifiable, Sendable {
     private(set) var items: [InstalledLUT] = []
     let directory: URL
     private let store: LUTFiles
+    private var removalHandlers: [UUID: (Set<String>) -> Void] = [:]
+    func registerRemoval(_ owner: UUID, handler: @escaping (Set<String>) -> Void) {
+        removalHandlers[owner] = handler
+    }
+    func clearReferences(to ids: Set<String>) {
+        for handler in Array(removalHandlers.values) { handler(ids) }
+    }
     private var references: [UUID: Set<String>] = [:]
     func protect(_ owner: UUID, ids: Set<String>) { references[owner] = ids }
-    func release(_ owner: UUID) { references.removeValue(forKey: owner) }
+    func release(_ owner: UUID) {
+        references.removeValue(forKey: owner)
+        removalHandlers.removeValue(forKey: owner)
+    }
     init(root: URL) {
         directory = root.appendingPathComponent("LUTs", isDirectory: true)
         store = LUTFiles(directory: directory)
@@ -33,6 +43,15 @@ nonisolated struct InstalledLUT: Codable, Identifiable, Sendable {
     }
     func rename(_ id: String, name: String) async throws {
         try await store.rename(id, name: name)
+        try await load()
+    }
+    func move(from offsets: IndexSet, to destination: Int) async throws {
+        var ordered = items
+        let moved = offsets.sorted().map { ordered[$0] }
+        let target = destination - offsets.filter { $0 < destination }.count
+        for index in offsets.sorted(by: >) { ordered.remove(at: index) }
+        ordered.insert(contentsOf: moved, at: target)
+        try await store.reorder(ordered.map(\.id))
         try await load()
     }
     func name(_ id: String?) -> String? { items.first { $0.id == id }?.name }
@@ -58,7 +77,7 @@ actor LUTFiles {
         guard saved.version == 1, saved.items.allSatisfy({ CubeLUT.validID($0.id) }),
             Set(saved.items.map(\.id)).count == saved.items.count
         else { throw CubeLUT.Failure.format("The LUT library index is not supported.") }
-        return saved.items.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return saved.items
     }
     func importFile(_ url: URL) throws -> InstalledLUT {
         guard url.pathExtension.lowercased() == "cube" else { throw CubeLUT.Failure.size }
@@ -69,8 +88,16 @@ actor LUTFiles {
         let data = try Data(contentsOf: url)
         let cube = try CubeLUT(data: data, filename: url.lastPathComponent)
         var items = try load()
-        if let existing = items.first(where: { $0.id == cube.id }) { return existing }
-        let item = InstalledLUT(id: cube.id, name: cube.title, size: cube.size, importedAt: Date())
+        if let index = items.firstIndex(where: { $0.id == cube.id }) {
+            if items[index].name == cube.title && cube.title.localizedCaseInsensitiveContains("generated") {
+                items[index].name = url.deletingPathExtension().lastPathComponent
+                try save(items)
+            }
+            return items[index]
+        }
+        let item = InstalledLUT(
+            id: cube.id, name: url.deletingPathExtension().lastPathComponent, size: cube.size,
+            importedAt: Date())
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let target = directory.appendingPathComponent(cube.id).appendingPathExtension("cube")
         let existed = FileManager.default.fileExists(atPath: target.path)
@@ -99,6 +126,14 @@ actor LUTFiles {
         guard let index = items.firstIndex(where: { $0.id == id }) else { throw CubeLUT.Failure.missing }
         items[index].name = name
         try save(items)
+    }
+    func reorder(_ ids: [String]) throws {
+        let items = try load()
+        guard ids.count == items.count, Set(ids) == Set(items.map(\.id)) else {
+            throw CubeLUT.Failure.format("The LUT list changed. Try again.")
+        }
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        try save(ids.compactMap { byID[$0] })
     }
     private func save(_ items: [InstalledLUT]) throws {
         let encoder = JSONEncoder()

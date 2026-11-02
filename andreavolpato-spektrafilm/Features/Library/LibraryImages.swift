@@ -6,6 +6,7 @@ actor LibraryImages {
     let files: LibraryFiles
     private let directory: URL
     private let memory = NSCache<NSString, CGImage>()
+    private var requests: [String: Task<CGImage, Error>] = [:]
     private var tail: Task<CGImage, Error>?
     private let resources: FilmRenderResources
 
@@ -16,6 +17,14 @@ actor LibraryImages {
         memory.totalCostLimit = 32 * 1024 * 1024
     }
     func image(_ photo: LibraryPhoto, thumbnail: Bool) async throws -> CGImage {
+        let requestKey = "\(photo.id)-\(photo.renderKey)-\(thumbnail)"
+        if let request = requests[requestKey] { return try await request.value }
+        let request = Task { try await self.load(photo, thumbnail: thumbnail) }
+        requests[requestKey] = request
+        defer { requests[requestKey] = nil }
+        return try await request.value
+    }
+    private func load(_ photo: LibraryPhoto, thumbnail: Bool) async throws -> CGImage {
         let key = "\(photo.id)-\(photo.renderKey)-\(thumbnail)" as NSString
         if let image = memory.object(forKey: key) { return image }
         if let image = await files.cachedImage(photo, thumbnail: thumbnail) {

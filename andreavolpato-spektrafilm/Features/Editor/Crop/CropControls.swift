@@ -12,7 +12,7 @@ struct CropControls: View {
     var onStraightenEditingChanged: (Bool) -> Void = { _ in }
 
     private let common: [CropAspect] = [
-        .original, .square, .fourThree, .threeTwo, .sixteenNine, .cinemaFlat, .cinemaScope,
+        .free, .original, .square, .fourThree, .threeTwo, .sixteenNine, .cinemaFlat, .cinemaScope,
     ]
 
     var body: some View {
@@ -25,6 +25,12 @@ struct CropControls: View {
                 controls
             }
         }.background(.background)
+            .onChange(of: geometry.straightenDegrees) { _, angle in
+                if angle == 0 {
+                    geometry.framingX = 0
+                    geometry.framingY = 0
+                }
+            }
     }
 
     private var controls: some View {
@@ -43,7 +49,11 @@ struct CropControls: View {
                     }
                 }.scrollIndicators(.hidden)
                 Menu("More", systemImage: "ellipsis") {
-                    ForEach(CropAspect.allCases.filter { !common.contains($0) }) { aspect in
+                    ForEach(
+                        CropAspect.allCases.filter {
+                            !common.contains($0) && ![.nineSixteen, .twoThree, .threeFour].contains($0)
+                        }
+                    ) { aspect in
                         Button(aspect.title) { crop.setAspect(aspect, imageAspect: imageAspect) }
                     }
                 }
@@ -78,8 +88,11 @@ struct CropControls: View {
                         straightenValue
                     }
                 }.font(.subheadline)
-                DefaultSlider(value: $geometry.straightenDegrees, range: -45...45, step: 0.1,
-                    title: "Straighten", identifier: "crop.straighten", snapsToDefault: false, onEditingChanged: onStraightenEditingChanged)
+                DefaultSlider(
+                    value: $geometry.straightenDegrees, range: -45...45, step: 0.1,
+                    title: "Straighten", identifier: "crop.straighten", snapsToDefault: false,
+                    onEditingChanged: onStraightenEditingChanged
+                )
                 .accessibilityLabel("Straighten")
                 .accessibilityValue(
                     geometry.straightenDegrees.formatted(.number.precision(.fractionLength(1)))
@@ -104,7 +117,7 @@ struct CropControls: View {
         }
     }
     private func transform(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).frame(width: 32, height: 32) }
+        Button(action: action) { Image(systemName: symbol).frame(width: 24, height: 24) }
             .accessibilityLabel(title).buttonStyle(.glass).buttonBorderShape(.circle)
     }
 

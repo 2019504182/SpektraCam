@@ -40,7 +40,7 @@ struct LUTPanel: View {
                         .lineLimit(2).multilineTextAlignment(.leading)
                     Spacer()
                     Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, minHeight: 44)
+                }.frame(maxWidth: .infinity, minHeight: 30)
             }
             .buttonStyle(.glass).buttonBorderShape(.roundedRectangle(radius: 12))
             .accessibilityIdentifier("lut.slot.\(slot.rawValue)")
@@ -60,7 +60,7 @@ struct LUTPanel: View {
                             }
                         }
                     }), range: 0...100, step: 1, minimum: 0, maximum: 100, unit: "%",
-                identifier: "lut.mix.\(slot.rawValue)", defaultValue: 100, fillOrigin: 0,
+                identifier: "lut.mix.\(slot.rawValue)", defaultValue: slot == .first ? 100 : 0, fillOrigin: 0,
                 onEditingChanged: { session.setInteraction(key: "look.mix.\(slot.rawValue)", active: $0) }
             )
             .disabled(value.id == nil)
@@ -80,6 +80,7 @@ struct LUTLibraryView: View {
     @State private var showImport = false
     @State private var confirmDelete = false
     @State private var working = false
+    @State private var progress = "Updating LUTs…"
     @State private var failure: String?
     @State private var renaming: InstalledLUT?
     @State private var name = ""
@@ -115,11 +116,22 @@ struct LUTLibraryView: View {
                         .swipeActions(edge: .trailing) { Button("Rename") { rename(item) }.tint(.gray) }
                     }
                 }
+                .onMove { offsets, destination in
+                    guard search.isEmpty, !working else { return }
+                    working = true
+                    Task {
+                        do { try await library.luts.move(from: offsets, to: destination) } catch {
+                            failure = error.localizedDescription
+                        }
+                        working = false
+                    }
+                }
+                .moveDisabled(!search.isEmpty || working)
             }
             .environment(\.editMode, .constant(editing ? .active : .inactive))
             .searchable(text: $search).navigationTitle(choose == nil ? "LUT Manager" : "LUTs")
             .navigationBarTitleDisplayMode(.inline)
-            .overlay { if working { ProgressView("Updating LUTs…") } }
+            .overlay { if working { ImportProgress(text: progress) } }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
@@ -151,8 +163,11 @@ struct LUTLibraryView: View {
                             "Delete selected LUTs?", isPresented: $confirmDelete, titleVisibility: .visible
                         ) {
                             Button("Delete LUTs", role: .destructive) { remove() }
+                            Button("Force Delete", role: .destructive) { remove(force: true) }
                         } message: {
-                            Text("LUTs used by saved edits or Undo must stay in the library.")
+                            Text(
+                                "Delete keeps LUTs used by saved edits or Undo. Force Delete clears those LUT references, including Undo/Redo. Other adjustments and originals stay."
+                            )
                         }
                 }
             }
@@ -198,7 +213,8 @@ struct LUTLibraryView: View {
         working = true
         Task {
             var errors: [String] = []
-            for url in urls {
+            for (index, url) in urls.enumerated() {
+                progress = "Importing \(index + 1) of \(urls.count)…"
                 do { try await library.luts.importFile(url) } catch {
                     errors.append(url.lastPathComponent + ": " + error.localizedDescription)
                 }
@@ -214,6 +230,7 @@ struct LUTLibraryView: View {
     private func saveName() {
         guard let item = renaming else { return }
         let value = name
+        progress = "Renaming LUT…"
         working = true
         Task {
             do { try await library.luts.rename(item.id, name: value) } catch {
@@ -223,13 +240,18 @@ struct LUTLibraryView: View {
             renaming = nil
         }
     }
-    private func remove() {
+    private func remove(force: Bool = false) {
+        progress = "Deleting LUTs…"
         working = true
         let ids = selection
         let protected = library.usedLUTIdentifiers
         Task {
             do {
-                try await library.luts.remove(ids, protected: protected)
+                if force {
+                    try await library.forceDeleteLUTs(ids)
+                } else {
+                    try await library.luts.remove(ids, protected: protected)
+                }
                 selection.removeAll()
                 editing = false
             } catch { failure = error.localizedDescription }

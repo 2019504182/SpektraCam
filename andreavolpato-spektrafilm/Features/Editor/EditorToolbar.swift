@@ -56,8 +56,8 @@ struct EditorToolbar: ToolbarContent {
     }
     private func toolLabel(_ title: String, symbol: String, selected: Bool) -> some View {
         VStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: 17, weight: .medium)).frame(width: 24, height: 22)
-            Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).frame(height: 12)
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 24, height: 22)
+            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).frame(height: 12)
         }
         .foregroundStyle(selected ? Color.accentColor : Color.primary)
         .dynamicTypeSize(...DynamicTypeSize.large)

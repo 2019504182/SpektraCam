@@ -161,6 +161,8 @@ final class PhotoScrollView: UIScrollView {
     }
     func centerPhoto() {
         guard !replacingImage else { return }
+        // Let the native page controller own horizontal swipes at fit. Pinch remains enabled.
+        panGestureRecognizer.isEnabled = zoomScale > minimumZoomScale * 1.01
         let horizontal = max(0, (bounds.width - contentSize.width) / 2)
         let reserve = zoomScale > minimumZoomScale * 1.05 ? zoomedTopInset : topInset
         let vertical = topAligned ? 0 : max(0, (bounds.height - reserve - contentSize.height) / 2)

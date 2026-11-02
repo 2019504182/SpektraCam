@@ -168,10 +168,12 @@ nonisolated struct SpatialMetalKernels: Sendable {
     private func dispatch(
         _ encoder: MTLComputeCommandEncoder, _ pipeline: MTLComputePipelineState, _ count: Int
     ) {
-        encoder.dispatchThreads(
-            MTLSize(width: count, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(
-                width: min(128, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        let width = min(128, pipeline.maxTotalThreadsPerThreadgroup)
+        // Every spatial kernel bounds-checks its index. Full groups also support
+        // Simulator devices that reject non-uniform threadgroups.
+        encoder.dispatchThreadgroups(
+            MTLSize(width: (count + width - 1) / width, height: 1, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
         encoder.endEncoding()
     }
 }

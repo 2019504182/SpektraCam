@@ -124,6 +124,9 @@ actor OriginalPhotoExporter {
     private var image: CGImage?
     private var output: URL?
     init(source: URL) { self.source = source }
+    func dimensions() throws -> CGSize {
+        try PhotoExporter.sourceDimensions(Data(contentsOf: source))
+    }
     func export(size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double) throws -> (
         URL, Int, Int
     ) {

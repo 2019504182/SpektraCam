@@ -79,8 +79,8 @@ struct DevelopPanel: View {
             onEditingChanged: { session.setInteraction(key: "mix", active: $0) })
     }
     private var directScan: some View {
-        DisclosureGroup("Scan") {
-            Toggle("Scan film directly", isOn: session.binding(\.scanFilm, key: "route"))
+        VStack(alignment: .leading, spacing: 4) {
+            AdaptiveToggle("Direct scan", isOn: session.binding(\.scanFilm, key: "route"))
                 .accessibilityIdentifier("develop.scanFilm")
             if session.recipe.bypassesPrint {
                 Text("Print settings are bypassed.").font(.caption2).foregroundStyle(.secondary)
@@ -112,18 +112,14 @@ struct DevelopPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             categoryControl(title, categories: categories, selection: selection)
                 .disabled(!film && session.recipe.bypassesPrint)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 4) {
-                        stockRows(stocks, category: selection.wrappedValue, selected: selected, film: film)
-                            .disabled(!film && session.recipe.bypassesPrint)
-                        if !film { directScan }
-                    }
+            ScrollView {
+                VStack(spacing: 4) {
+                    stockRows(stocks, category: selection.wrappedValue, selected: selected, film: film)
+                        .disabled(!film && session.recipe.bypassesPrint)
+                    if !film { directScan }
                 }
-                .clipped()
-                .onAppear { proxy.scrollTo(selected, anchor: .center) }
-
             }
+            .clipped()
             .id(selection.wrappedValue)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

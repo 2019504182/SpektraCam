@@ -5,6 +5,8 @@ import UIKit
 struct CropCanvas: View {
     let image: UIImage
     @Binding var selection: CropSelection
+    @Binding var geometry: ImageGeometry
+    @GestureState private var framingOrigin: CGSize?
     @GestureState private var dragOrigin: CGRect?
 
     private var imageAspect: CGFloat { image.size.width / image.size.height }
@@ -81,7 +83,7 @@ struct CropCanvas: View {
     }
 
     private var cropDescription: String {
-        "\(Int(selection.normalizedRect.width * 100)) percent wide, \(Int(selection.normalizedRect.height * 100)) percent high"
+        "\(Int(selection.normalizedRect.width * 100)) percent wide, \(Int(selection.normalizedRect.height * 100)) percent high; framing \(Int(geometry.framingX * 100)), \(Int(geometry.framingY * 100))"
     }
 
     private func fittedImage(in size: CGSize) -> CGRect {
@@ -113,12 +115,29 @@ struct CropCanvas: View {
             .updating($dragOrigin) { _, origin, _ in
                 if origin == nil { origin = selection.normalizedRect }
             }
+            .updating($framingOrigin) { _, origin, _ in
+                if origin == nil {
+                    let position = geometry.boundedFraming(in: image.size)
+                    origin = CGSize(width: position.x, height: position.y)
+                }
+            }
             .onChanged { value in
-                selection.move(
-                    from: dragOrigin ?? selection.normalizedRect,
-                    by: CGSize(
-                        width: value.translation.width / size.width,
-                        height: value.translation.height / size.height))
+                if geometry.straightenDegrees != 0 && selection.normalizedRect == CropSelection.fullImage {
+                    let start = framingOrigin ?? CGSize(width: geometry.framingX, height: geometry.framingY)
+                    var requested = geometry
+                    requested.framingX = start.width + value.translation.width / size.width
+                    requested.framingY = start.height + value.translation.height / size.height
+                    let position = requested.boundedFraming(in: image.size)
+                    geometry.framingX = position.x
+                    geometry.framingY = position.y
+                } else {
+                    selection.move(
+                        from: dragOrigin ?? selection.normalizedRect,
+                        by: CGSize(
+                            width: value.translation.width / size.width,
+                            height: value.translation.height / size.height))
+                }
+
             }
     }
 

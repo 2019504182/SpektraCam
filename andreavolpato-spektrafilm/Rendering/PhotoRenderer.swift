@@ -73,8 +73,8 @@ actor PhotoRenderer {
         return value
     }
     private func selectInputMode(_ mode: EditRecipe.LookMode) {
-        if initialTemperature != nil, inputLookMode != mode {
-            // RAW film and photo-LUT input have different decoder rendering intents.
+        if inputLookMode != mode {
+            // Film/RAW and SDR photo-LUT input have different rendering intents, including HEIF gain maps.
             baseline = nil
             baselineImage = nil
             input = nil
@@ -253,7 +253,10 @@ actor PhotoRenderer {
         return try ToneRenderer.render(mixed, tone: recipe.tone.outputStage)
     }
 
-    func export(_ recipe: EditRecipe, size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double)
+    func export(
+        _ recipe: EditRecipe, size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double,
+        allowOvercommit: Bool = false
+    )
         async throws -> (URL, Int, Int)
     {
         if exportKey != recipe || exportSize != size { exportImage = nil }
@@ -276,9 +279,15 @@ actor PhotoRenderer {
                 originalLong, size.maximum.map { Int(ceil(Double($0) / max(fraction, 1e-6))) } ?? originalLong
             )
             let scale = Double(maximum) / Double(originalLong)
+            let (_, exportGPU) = try await renderResources.load()
+            await exportGPU.releaseWorkingCaches()
+            filmImage = nil
+            opticsImage = nil
+            grainImages = nil
             try RenderMemoryBudget.check(
                 width: max(1, Int(ceil(Double(width) * scale))),
-                height: max(1, Int(ceil(Double(height) * scale))), recipe: recipe)
+                height: max(1, Int(ceil(Double(height) * scale))), recipe: recipe,
+                allowOvercommit: allowOvercommit)
             // The RAW input path decodes directly to float; an 8-bit fallback decode is redundant.
             let decoded =
                 initialTemperature != nil ? source : try PhotoExporter.decodeSource(data, maximum: maximum)

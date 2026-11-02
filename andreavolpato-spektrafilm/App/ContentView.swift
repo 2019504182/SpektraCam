@@ -28,6 +28,10 @@ struct ContentView: View {
                         await recoverCaptures(library)
                         try? await library.luts.load()
                         try? await library.repairRAWDimensions()
+                        #if DEBUG
+                            await ExportValidation.checkBypass(library)
+                            await ExportValidation.run(library)
+                        #endif
                     }
             } else if let failure {
                 ContentUnavailableView {

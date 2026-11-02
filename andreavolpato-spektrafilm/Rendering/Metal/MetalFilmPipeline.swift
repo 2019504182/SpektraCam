@@ -662,6 +662,13 @@ private nonisolated final class FilmFrameBuffers {
         guard let buffer = device.makeBuffer(length: length, options: .storageModeShared) else {
             throw MetalFilmPipeline.Failure.allocation
         }
+        #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--check-export") {
+                NSLog(
+                    "EXPORT GPU allocated=%llu MB buffer=%d MB",
+                    UInt64(device.currentAllocatedSize) / 1_048_576, length / 1_048_576)
+            }
+        #endif
         return buffer
     }
     func release(_ buffer: MTLBuffer) {

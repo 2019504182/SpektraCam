@@ -177,6 +177,37 @@ import SwiftData
             throw error
         }
     }
+    /// Commit reference changes before deleting files. Failure keeps original files and all other adjustments.
+    func forceDeleteLUTs(_ ids: Set<String>) async throws {
+        try flushPending()
+        var changes: [(LibrarySchemaV1.Record, Data?, String, Data)] = []
+        for record in records.values {
+            guard let data = record.recipeData else { continue }
+            let recipe = try JSONDecoder().decode(EditRecipe.self, from: data)
+            guard !recipe.look.identifiers.isDisjoint(with: ids) else { continue }
+            let updated = try LibraryPhoto.recipeData(recipe.removingLUTs(ids))
+            changes.append((record, record.recipeData, record.renderKey, updated))
+        }
+        for (record, _, _, updated) in changes {
+            record.recipeData = updated
+            record.renderKey = LibraryPhoto.key(updated)
+        }
+        do { try context.save() } catch {
+            for (record, data, key, _) in changes {
+                record.recipeData = data
+                record.renderKey = key
+            }
+            throw error
+        }
+        for (record, _, _, _) in changes {
+            if let index = photos.firstIndex(where: { $0.id == record.id }) {
+                photos[index] = try record.snapshot()
+            }
+        }
+        luts.clearReferences(to: ids)
+        await images.discardMemory()
+        try await luts.remove(ids, protected: usedLUTIdentifiers)
+    }
     func revert(_ ids: Set<UUID>) async throws {
         for id in ids {
             guard let record = records[id], record.recipeData != nil else { continue }

@@ -65,7 +65,10 @@ nonisolated enum SourceImageRenderer {
                 image = renderedSource
             } else if let data,
                 let native = CIImage(
-                    data: data, options: [.applyOrientationProperty: true, .expandToHDR: true])
+                    data: data,
+                    options: [
+                        .applyOrientationProperty: true, .expandToHDR: recipe.look.mode == .spektrafilm,
+                    ])
             {
                 // The display thumbnail is 8-bit. Processing decodes original pixels before downsampling.
                 let scale = min(1, Double(maximum) / max(native.extent.width, native.extent.height))
@@ -129,7 +132,10 @@ nonisolated enum SourceImageRenderer {
 
     static func workingImage(_ input: Input) throws -> CGImage {
         let source = image(input)
-        guard let frame = context.createCGImage(source, from: source.extent, format: .RGBAf, colorSpace: linear, deferred: false) else { throw Failure.decode }
+        guard
+            let frame = context.createCGImage(
+                source, from: source.extent, format: .RGBAf, colorSpace: linear, deferred: false)
+        else { throw Failure.decode }
         return frame
     }
     /// Blend in linear light, then return the same explicit SDR sRGB boundary as film output.

@@ -190,14 +190,15 @@ struct CameraExposureReadout: SwiftUI.View {
         let reading = model.readings
         VStack(alignment: .trailing, spacing: 0) {
             Text(
-                reading.seconds > 0
-                    ? (reading.seconds < 1
-                        ? "1/\(Int((1 / reading.seconds).rounded())) s"
-                        : "\(reading.seconds.formatted(.number.precision(.fractionLength(1)))) s") : "— s")
+                "ƒ\(reading.aperture.formatted(.number.precision(.fractionLength(1)))) | "
+                    + (reading.seconds > 0
+                        ? (reading.seconds < 1
+                            ? "1/\(Int((1 / reading.seconds).rounded())) s"
+                            : "\(reading.seconds.formatted(.number.precision(.fractionLength(1)))) s")
+                        : "— s"))
             Text(
                 reading.iso > 0
-                    ? "ƒ\(reading.aperture.formatted(.number.precision(.fractionLength(1)))) | ISO\(Int(reading.iso.rounded()))"
-                    : "ƒ— | ISO—")
+                    ? "ISO\(Int(reading.iso.rounded()))" : "ISO—")
         }
         .font(.caption2.weight(.medium)).monospacedDigit().lineLimit(1).foregroundStyle(.secondary)
         .dynamicTypeSize(...DynamicTypeSize.large)

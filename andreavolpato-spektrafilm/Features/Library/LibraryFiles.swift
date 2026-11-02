@@ -77,7 +77,7 @@ actor LibraryFiles {
     }
     private func cacheURL(_ photo: LibraryPhoto, thumbnail: Bool) -> URL {
         // Render changes must rebuild saved previews even when the edit recipe is unchanged.
-        let revision = photo.hasEdits ? "v6-" : ""
+        let revision = photo.hasEdits ? "v8-" : ""
         return cache.appendingPathComponent(photo.id.uuidString)
             .appendingPathComponent(revision + photo.renderKey + (thumbnail ? "-thumb.jpg" : "-preview.jpg"))
     }
@@ -140,6 +140,16 @@ actor LibraryFiles {
         let data = try Data(contentsOf: sourceURL(photo))
         guard let result = ImportedPhoto.decode(data, maximum: maximum) else { throw Failure.image }
         return result
+    }
+    func lensName(_ photo: LibraryPhoto) -> String? {
+        guard
+            let source = CGImageSourceCreateWithURL(
+                sourceURL(photo) as CFURL,
+                [kCGImageSourceShouldCache: false] as CFDictionary),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        else { return nil }
+        return exif[kCGImagePropertyExifLensModel] as? String
     }
     func nativeRAWSize(_ photo: LibraryPhoto) -> CGSize? {
         CIRAWFilter(imageURL: sourceURL(photo))?.nativeSize

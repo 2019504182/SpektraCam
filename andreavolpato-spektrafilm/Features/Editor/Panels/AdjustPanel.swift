@@ -27,15 +27,12 @@ struct AdjustPanel: View {
                     range: -5...5, step: 0.05, minimum: -10, maximum: 10, unit: "EV",
                     identifier: "tone.exposure",
                     onEditingChanged: { session.setInteraction(key: "tone.exposure", active: $0) })
+                field("camera.exposure_compensation_ev").disabled(session.recipe.look.mode == .lut)
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 16) {
-                        field("camera.exposure_compensation_ev")
                         field("camera.auto_exposure")
                         if session.recipe.flag("camera.auto_exposure") {
                             field("camera.auto_exposure_method")
-                            Text("Meters the original before source adjustments.").font(.caption)
-                                .foregroundStyle(
-                                    .secondary)
                         }
                         VStack(alignment: .leading, spacing: 12) {
                             NumericControl(
@@ -46,9 +43,6 @@ struct AdjustPanel: View {
                                 onEditingChanged: {
                                     session.setInteraction(key: "enlarger.print_exposure", active: $0)
                                 })
-                            Text("More print exposure darkens the print.").font(.caption).foregroundStyle(
-                                .secondary)
-                            field("enlarger.print_exposure_compensation")
                             DisclosureGroup("Calibration") {
                                 NumericControl(
                                     title: "Input exposure",
@@ -60,17 +54,18 @@ struct AdjustPanel: View {
                         }.disabled(session.recipe.bypassesPrint || session.recipe.look.mode == .lut)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
                 } label: {
-                    Text("Film & print exposure").foregroundStyle(Color.primary).accessibilityIdentifier(
-                        "adjust.exposureStages")
+                    Text("Print exposure & metering").foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier(
+                            "adjust.exposureStages")
                 }
                 .disabled(session.recipe.look.mode == .lut)
                 Divider()
-                toneControl("S-curve", path: \.contrast, range: 0.25...2, defaultValue: 1, id: "contrast")
+                toneControl("S-curve", path: \.contrast, range: -0.35...0.35, defaultValue: 0, id: "contrast")
                 toneControl("Pivot", path: \.pivot, range: 0...1, defaultValue: 0.35, id: "pivot")
             case .liftGain:
                 toneControl(
                     "Highlights", path: \.highlights, range: -2...2, defaultValue: 0, id: "highlights")
-                toneControl("Shadows", path: \.shadows, range: -1...1, defaultValue: 0, id: "shadows")
+                toneControl("Shadows", path: \.shadows, range: -2...2, defaultValue: 0, id: "shadows")
             case .color:
                 if let temperature = session.recipe.temperature {
                     NumericControl(
@@ -78,7 +73,7 @@ struct AdjustPanel: View {
                         value: Binding(
                             get: { session.recipe.temperature ?? temperature },
                             set: { value in session.update(key: "temperature") { $0.temperature = value } }),
-                        range: 2000...12000, step: 25, minimum: 1000, maximum: 50000, unit: "K",
+                        range: 2500...8000, step: 25, minimum: 1000, maximum: 50000, unit: "K",
                         identifier: "source.temperature",
                         defaultValue: session.photo.rawTemperature ?? temperature,
                         onEditingChanged: { session.setInteraction(key: "temperature", active: $0) })
@@ -102,7 +97,7 @@ struct AdjustPanel: View {
                     range: 0...200, step: 1, minimum: 0, maximum: 200, unit: "%",
                     identifier: "source.saturation", defaultValue: 100,
                     onEditingChanged: { session.setInteraction(key: "source.saturation", active: $0) })
-                Toggle(
+                AdaptiveToggle(
                     "Black & White",
                     isOn: Binding(
                         get: { session.recipe.tone.monochrome },
@@ -154,7 +149,7 @@ struct AdjustPanel: View {
                     if session.recipe.bypassesPrint {
                         Text("Direct scan skips print controls.").font(.caption).foregroundStyle(.secondary)
                     }
-                }
+                }.disabled(session.recipe.bypassesPrint || session.recipe.look.mode == .lut)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -165,11 +160,13 @@ struct AdjustPanel: View {
         NumericControl(
             title: title,
             value: Binding(
-                get: { session.recipe.tone[keyPath: path] },
+                get: { session.recipe.tone[keyPath: path] - (id == "contrast" ? 1 : 0) },
                 set: { value in
                     session.update(key: "tone." + id) {
-                        if id == "highlights" { $0.tone.algorithm = 2 }
-                        $0.tone[keyPath: path] = value
+                        if id == "highlights" && $0.tone.algorithm < 2 { $0.tone.algorithm = 2 }
+                        if id == "shadows" && $0.tone.algorithm < 3 { $0.tone.algorithm = 3 }
+                        if id == "contrast" || id == "pivot" { $0.tone.algorithm = 4 }
+                        $0.tone[keyPath: path] = id == "contrast" ? min(max(value, -0.35), 0.35) + 1 : value
                     }
                 }),
             range: range, step: 0.01, minimum: range.lowerBound, maximum: range.upperBound,

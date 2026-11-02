@@ -47,13 +47,15 @@ private func image(_ colors: [SIMD3<Float>]) -> CGImage {
             } catch {}
         }
         let spatial = CGContext(
-            data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0,
+            data: nil, width: 64, height: 259, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         spatial.setFillColor(CGColor(red: 0.1, green: 0.3, blue: 0.6, alpha: 1))
-        spatial.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+        spatial.fill(CGRect(x: 0, y: 0, width: 64, height: 259))
+        let cleanImage = spatial.makeImage()!
         spatial.setFillColor(CGColor(red: 1, green: 0.2, blue: 0.1, alpha: 1))
         spatial.fill(CGRect(x: 3, y: 2, width: 19, height: 13))
+        spatial.fill(CGRect(x: 7, y: 120, width: 31, height: 42))
         let spatialImage = spatial.makeImage()!
         let spatialInput = try PhotoColorBridge.decode(spatialImage)
         let spatialOutput = try PhotoColorBridge.decode(
@@ -63,6 +65,22 @@ private func image(_ colors: [SIMD3<Float>]) -> CGImage {
         }.max()!
         precondition(spatialError < 0.0001, "LUT texture pass changed spatial detail or orientation")
         print("PASS: spatial identity LUT preserves edges and orientation; max error", spatialError)
+        var stripeTone = EditRecipe.Tone()
+        stripeTone.contrast = 1.2
+        let whole = try PhotoColorBridge.decode(
+            ToneRenderer.working(
+                spatialImage, tone: stripeTone,
+                luts: [.init(cube: identity, mix: 0.7)], residual: (spatialImage, cleanImage),
+                monochromeResidual: true))
+        let strips = try PhotoColorBridge.decode(
+            ToneRenderer.tiledWorking(
+                spatialImage, tone: stripeTone,
+                luts: [.init(cube: identity, mix: 0.7)], residual: (spatialImage, cleanImage),
+                monochromeResidual: true))
+        let stripeError = zip(whole, strips).map { abs($0.x - $1.x) + abs($0.y - $1.y) + abs($0.z - $1.z) }
+            .max()!
+        precondition(stripeError < 0.00001, "Strip export changed pixels, orientation or boundary rows")
+        print("PASS: strip/whole grade, LUT and monochrome grain agree; error", stripeError)
         let colors: [SIMD3<Float>] = [
             .init(0.8, 0.5, 0.2), .init(0.8, 0.2, 0.5), .init(0.5, 0.8, 0.2), .init(0.2, 0.8, 0.5),
             .init(0.5, 0.2, 0.8), .init(0.2, 0.5, 0.8), .init(-0.1, 1.4, 2),
@@ -129,6 +147,13 @@ private func image(_ colors: [SIMD3<Float>]) -> CGImage {
         precondition(item.id == duplicate.id && library!.items.count == 1)
         try await library!.rename(item.id, name: "  Test Look  ")
         precondition(library!.name(item.id) == "Test Look")
+        let secondFile = base.appendingPathComponent("second.cube")
+        try Data(cubeText(title: "Second") { $0 * 0.5 }.utf8).write(to: secondFile)
+        let secondItem = try await library!.importFile(secondFile)
+        try await library!.move(from: IndexSet(integer: 1), to: 0)
+        try await library!.load()
+        precondition(library!.items.first?.id == secondItem.id, "Restart lost the LUT order")
+        try await library!.remove([secondItem.id], protected: [])
         let owner = UUID()
         library!.protect(owner, ids: [item.id])
         do {

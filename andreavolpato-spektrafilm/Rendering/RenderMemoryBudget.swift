@@ -9,21 +9,27 @@ import Metal
 /// stays at the chosen size; it never silently substitutes a low-resolution export.
 nonisolated enum RenderMemoryBudget {
     struct Failure: LocalizedError {
+        var estimated: UInt64? = nil
+        var available: UInt64? = nil
         var errorDescription: String? {
-            "This size needs more rendering memory. Choose M or S and try again."
+            if let estimated, let available {
+                return
+                    "This render is estimated to need \(estimated / 1_048_576) MB; the current safe allowance is \(available / 1_048_576) MB. Choose a smaller size or disable diffusion and try again."
+            }
+            return "This size exceeds the rendering limits. Choose a smaller size and try again."
         }
     }
-    static func check(width: Int, height: Int, recipe: EditRecipe) throws {
+    static func check(width: Int, height: Int, recipe: EditRecipe, allowOvercommit: Bool = false) throws {
         guard width > 0, height > 0, width <= 65536, height <= 65536,
             let device = MTLCreateSystemDefaultDevice()
         else { throw Failure() }
         let pixels = UInt64(width) * UInt64(height)
         guard pixels <= UInt64(device.maxBufferLength / 16) else { throw Failure() }
-        var estimate = pixels * 224 + 96 * 1024 * 1024
+        // Full-frame graph storage plus CPU input; decode and pointwise grade have separate lifetimes.
+        // Pointwise grading uses 128-row strips, including LUT/noise references.
+        var estimate = pixels * (recipe.look.mode == .lut ? 192 : 176) + 96 * 1024 * 1024
         if recipe.monochromeGrain && recipe.flag("film_render.grain.active") { estimate += pixels * 32 }
-        if !recipe.tone.isIdentity { estimate += pixels * 48 }
-        if recipe.look.mode == .lut { estimate += pixels * 96 }
-        if recipe.temperature != nil { estimate += pixels * 32 }
+        if max(width, height) <= 2048 && !recipe.tone.outputStage.isIdentity { estimate += pixels * 48 }
         let pitch = recipe.number("camera.film_format_mm") * 1000 / Double(max(width, height))
         for prefix in ["camera.diffusion_filter", "enlarger.diffusion_filter"] {
             if prefix.hasPrefix("enlarger") && recipe.bypassesPrint { continue }
@@ -45,18 +51,14 @@ nonisolated enum RenderMemoryBudget {
         }
         let processAllowance: UInt64
         #if os(iOS) && !targetEnvironment(simulator)
-            processAllowance = UInt64(os_proc_available_memory()) * 3 / 4
+            processAllowance = UInt64(os_proc_available_memory()) * 4 / 5
         #else
             processAllowance = min(ProcessInfo.processInfo.physicalMemory / 3, 8 * 1024 * 1024 * 1024)
         #endif
-        // Simulator reports zero when this advisory Metal limit is unavailable.
-        // Use the process allowance then; zero must not reject every export size.
-        let recommended = device.recommendedMaxWorkingSetSize
-        let allocated = UInt64(device.currentAllocatedSize)
-        let metalAllowance =
-            recommended == 0
-            ? processAllowance
-            : (recommended > allocated ? recommended - allocated : 0)
-        guard estimate < min(processAllowance, metalAllowance) else { throw Failure() }
+        // Metal's recommended working set is a performance advisory, not an allocation limit.
+        // The process headroom and single-buffer limit above are the admission limits.
+        guard allowOvercommit || estimate < processAllowance else {
+            throw Failure(estimated: estimate, available: processAllowance)
+        }
     }
 }

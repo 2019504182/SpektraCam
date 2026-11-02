@@ -10,9 +10,9 @@ nonisolated enum RawAdjustments {
         guard
             [tone.exposureEV, tone.contrast, tone.pivot, tone.shadows, tone.highlights].allSatisfy(
                 \.isFinite),
-            (1...2).contains(tone.algorithm), (-10...10).contains(tone.exposureEV),
+            (1...4).contains(tone.algorithm), (-10...10).contains(tone.exposureEV),
             (0.25...2).contains(tone.contrast), (0...1).contains(tone.pivot),
-            (-1...1).contains(tone.shadows), (-10...10).contains(tone.highlights)
+            (-2...2).contains(tone.shadows), (-10...10).contains(tone.highlights)
         else { throw Failure.parameters }
     }
     static func parameters(_ tone: EditRecipe.Tone) -> [Float] {
@@ -24,11 +24,19 @@ nonisolated enum RawAdjustments {
     static let shader = """
         float rawEncode(float x) { return x<=0.0031308f ? 12.92f*x : 1.055f*pow(x,1.0f/2.4f)-0.055f; }
         float rawDecode(float x) { return x<=0.04045f ? x/12.92f : pow((x+0.055f)/1.055f,2.4f); }
-        float rawCurve(float x, float4 p, bool legacy) {
+        float rawCurve(float x, float4 p, float algorithm) {
             if(x<=0.0f || x>=1.0f) return x;
             float pivot=clamp(p.y,0.0001f,0.9999f);
-            if(x<=pivot) { float t=x/pivot; return pivot*pow(t+p.z*t*(1-t)*(1-t),p.x); }
-            float t=(1-x)/(1-pivot), shifted=legacy ? t-p.w*t*(1-t)*(1-t) : t;
+            if(algorithm>=3.5f) {
+                float lifted=x<=pivot ? pivot*pow(x/pivot,exp2(-p.z)) : x;
+                if(p.x==1.0f) return lifted;
+                float slope=p.x/max(2.0f-p.x,0.01f);
+                float center=log(pivot/(1-pivot));
+                float odds=slope*(log(lifted/(1-lifted))-center)+center;
+                return odds>=0 ? 1/(1+exp(-odds)) : exp(odds)/(1+exp(odds));
+            }
+            if(x<=pivot) { float t=x/pivot; float lifted=algorithm>=2.5f ? pow(t,exp2(-p.z)) : t+p.z*t*(1-t)*(1-t); return pivot*pow(lifted,p.x); }
+            float t=(1-x)/(1-pivot), shifted=algorithm<1.5f ? t-p.w*t*(1-t)*(1-t) : t;
             return 1-(1-pivot)*pow(shifted,p.x);
         }
         float3 applyRaw(float3 rgb, constant float4 *p) {
@@ -44,7 +52,7 @@ nonisolated enum RawAdjustments {
                 }
             }
             float3 code=float3(rawEncode(rgb.r),rawEncode(rgb.g),rawEncode(rgb.b));
-            code=float3(rawCurve(code.r,p[0],legacy),rawCurve(code.g,p[0],legacy),rawCurve(code.b,p[0],legacy));
+            code=float3(rawCurve(code.r,p[0],p[1].y),rawCurve(code.g,p[0],p[1].y),rawCurve(code.b,p[0],p[1].y));
             return float3(rawDecode(code.r),rawDecode(code.g),rawDecode(code.b));
         }
         """

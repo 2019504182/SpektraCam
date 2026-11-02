@@ -58,6 +58,14 @@ import SwiftUI
         geometryImage = initialPreview
         displayImage = initialPreview
         luts?.protect(id, ids: usedLUTIdentifiers)
+        luts?.registerRemoval(id) { [weak self] ids in self?.removeLUTReferences(ids) }
+    }
+    private func removeLUTReferences(_ ids: Set<String>) {
+        undoStack = undoStack.map { $0.removingLUTs(ids) }
+        redoStack = redoStack.map { $0.removingLUTs(ids) }
+        recipe = recipe.removingLUTs(ids)
+        recipeDidChange?(recipe, true)
+        renderFilmIfNeeded()
     }
     deinit {
         let owner = id
@@ -128,13 +136,16 @@ import SwiftUI
             recipe.flags = recipe.flags.filter { !$0.key.hasPrefix("film_render.grain.") }
         }
     }
-    func export(size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double) async throws -> (
+    func export(
+        size: PhotoExporter.Size, format: PhotoExporter.Format, quality: Double, allowOvercommit: Bool = false
+    ) async throws -> (
         URL, Int, Int
     ) {
         let snapshot = recipe
         await filmTask?.value
         try Task.checkCancellation()
-        return try await filmRenderer.export(snapshot, size: size, format: format, quality: quality)
+        return try await filmRenderer.export(
+            snapshot, size: size, format: format, quality: quality, allowOvercommit: allowOvercommit)
     }
     /// Cache only a frame which matches the recipe that is being saved.
     func currentPreview() async -> CGImage? {

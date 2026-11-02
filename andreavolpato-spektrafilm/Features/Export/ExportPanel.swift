@@ -14,16 +14,24 @@ struct ExportPanel: View {
     @Environment(\.dismiss) private var dismiss
     @State private var format = PhotoExporter.Format.jpeg
     @State private var size = PhotoExporter.Size.full
-    @State private var quality = 0.95
+    @State private var quality = 1.0
+    @State private var detent = PresentationDetent.fraction(0.68)
+    @State private var sourceDimensions = ""
     @State private var retry = 0
     @State private var url: URL?
     @State private var dimensions = ""
     @State private var failure: String?
+    @State private var canOvercommit = false
+    @State private var confirmOvercommit = false
+    @State private var overcommitKey: String?
+    private var settingsKey: String { "\(size.rawValue)-\(format.rawValue)-\(quality)" }
     @State private var saving = false
     @State private var saved = false
     @State private var saveFailure: String?
     @State private var renderTask: Task<(URL, Int, Int), Error>?
-    private struct Request: Hashable { let format: String, size: String, quality: Double, retry: Int }
+    private struct Request: Hashable {
+        let format: String, size: String, quality: Double, retry: Int, overcommit: Bool
+    }
 
     var body: some View {
         NavigationStack {
@@ -34,7 +42,9 @@ struct ExportPanel: View {
                     }.pickerStyle(.segmented)
                     Text(
                         size.maximum.map { "Maximum long edge · \($0) px" }
-                            ?? "Original resolution, with crop applied"
+                            ?? (sourceDimensions.isEmpty
+                                ? "Original resolution, with crop applied"
+                                : "Original: " + sourceDimensions + " px, with crop applied")
                     )
                     .font(.caption).foregroundStyle(.secondary)
                     Picker("Format", selection: $format) {
@@ -42,18 +52,40 @@ struct ExportPanel: View {
                     }.pickerStyle(.segmented)
                     if format == .jpeg {
                         Picker("JPEG quality", selection: $quality) {
-                            Text("Standard").tag(0.85)
-                            Text("High").tag(0.95)
                             Text("Maximum").tag(1.0)
+                            Text("High").tag(0.95)
+                            Text("Standard").tag(0.85)
                         }.pickerStyle(.segmented)
                     }
-                    LabeledContent("Color", value: "SDR · sRGB · 8-bit")
+                    LabeledContent("Color space", value: "SDR · sRGB · 8-bit")
                     if url != nil {
-                        LabeledContent("Dimensions", value: dimensions)
-                        if let saveFailure { Text(saveFailure).font(.footnote).foregroundStyle(.secondary) }
+                        LabeledContent("Dimensions", value: dimensions).accessibilityIdentifier(
+                            "export.dimensions")
+                        if let saveFailure {
+                            Text(saveFailure).font(.footnote).foregroundStyle(.secondary)
+                        }
                     } else if let failure {
                         Text(failure).foregroundStyle(.secondary)
-                        Button("Retry") { retry += 1 }
+                        Button("Retry") {
+                            overcommitKey = nil
+                            retry += 1
+                        }
+                        if canOvercommit {
+                            Button("Try Export Anyway") { confirmOvercommit = true }
+                                .accessibilityIdentifier("export.tryAnyway")
+                                .confirmationDialog(
+                                    "Try export anyway?", isPresented: $confirmOvercommit,
+                                    titleVisibility: .visible
+                                ) {
+                                    Button("Try Export Anyway", role: .destructive) {
+                                        overcommitKey = settingsKey
+                                    }
+                                } message: {
+                                    Text(
+                                        "This may take longer. If memory runs out, iOS may close SpektraCam. Original photos and saved edits remain stored."
+                                    )
+                                }
+                        }
                     } else {
                         ProgressView("Preparing image…")
                     }
@@ -71,16 +103,27 @@ struct ExportPanel: View {
                             shareButton
                             saveButton
                         }
-                    }
-                    .controlSize(.large)
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    }.controlSize(.large).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .padding(.horizontal, 16).padding(.vertical, 12)
                 }
             }
             .navigationTitle("Export").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task(id: Request(format: format.rawValue, size: size.rawValue, quality: quality, retry: retry)) {
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .task(
+                id: Request(
+                    format: format.rawValue, size: size.rawValue, quality: quality, retry: retry,
+                    overcommit: overcommitKey == settingsKey)
+            ) {
                 await prepareExport()
+            }
+            .task {
+                if let session {
+                    sourceDimensions = "\(session.photo.width) × \(session.photo.height)"
+                } else if let original, let dimensions = try? await original.dimensions() {
+                    sourceDimensions = "\(Int(dimensions.width)) × \(Int(dimensions.height))"
+                }
             }
             .onDisappear {
                 renderTask?.cancel()
@@ -88,13 +131,14 @@ struct ExportPanel: View {
                 if let original { Task { await original.discard() } }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.fraction(0.68), .large], selection: $detent)
         .presentationDragIndicator(.visible)
     }
     private var saveButton: some View {
         Button(action: saveToPhotos) {
             HStack(spacing: 7) {
-                Image(systemName: saved ? "checkmark" : "square.and.arrow.down").foregroundStyle(.white)
+                Image(systemName: saved ? "checkmark" : "square.and.arrow.down").foregroundStyle(
+                    .white)
                 Text(saved ? "Saved to Photos" : saving ? "Saving…" : "Save to Photos")
             }.padding(.vertical, 4)
         }
@@ -124,6 +168,7 @@ struct ExportPanel: View {
     private func prepareExport() async {
         url = nil
         failure = nil
+        canOvercommit = false
         saved = false
         saveFailure = nil
         let previous = renderTask
@@ -131,12 +176,14 @@ struct ExportPanel: View {
         let requestedSize = size
         let requestedFormat = format
         let requestedQuality = quality
+        let allowOvercommit = overcommitKey == settingsKey
         let job = Task {
             if let previous { _ = await previous.result }
             try Task.checkCancellation()
             if let session {
                 return try await session.export(
-                    size: requestedSize, format: requestedFormat, quality: requestedQuality)
+                    size: requestedSize, format: requestedFormat, quality: requestedQuality,
+                    allowOvercommit: allowOvercommit)
             }
             guard let original else { throw PhotoExporter.Failure.render }
             return try await original.export(
@@ -155,6 +202,8 @@ struct ExportPanel: View {
         } catch {
             guard !Task.isCancelled else { return }
             failure = error.localizedDescription
+            canOvercommit = (error as? RenderMemoryBudget.Failure)?.estimated != nil
+            detent = .large
         }
     }
 }

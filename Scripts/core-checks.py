@@ -44,6 +44,9 @@ checks['source'] = (checks['recipe'][0] + ['PhotoColorBridge','SourceImageRender
 checks['exposure'] = (checks['color-pipeline'][0], ['.'])
 checks['preview'] = (checks['metal-film'][0] + ['SourceImageRenderer','ToneRenderer','CubeLUT','PhotoExporter','GeometryRenderer','RenderMemoryBudget','FilmRenderResources','PhotoRenderer'], ['.'])
 checks['processed-export'] = (checks['preview'][0] + ['PhotoMetadata','ImportedPhoto'], ['.'])
+checks['bypass'] = checks['processed-export']
+checks['stress-export'] = checks['processed-export']
+checks['contrast'] = checks['preview']
 checks['raw-order'] = (checks['preview'][0], ['.'])
 checks['library'] = (checks['processed-export'][0] + ['LibraryPhoto','LibraryFiles','LibraryImages','PhotoLibrary','LUTLibrary'], ['.'])
 checks['monochrome-grain'] = (checks['metal-film'][0], ['.'])
@@ -62,8 +65,8 @@ if args.simulator:
  if not booted: raise SystemExit('Boot a Simulator before using --simulator.')
  simulator = [simctl,'spawn',booted[0]]
  compiler += ['-target',platform.machine()+'-apple-ios27.2-simulator']
-for name in args.checks or [key for key in checks if not key.startswith('metal-') and not key.endswith('-benchmark') and key not in ['raw-input','processed-export']]:
+for name in args.checks or [key for key in checks if not key.startswith('metal-') and not key.endswith('-benchmark') and key not in ['raw-input','processed-export','stress-export','bypass']]:
  files,arguments=checks[name];binary=out/(name+'-checks'+('-simulator' if args.simulator else ''))
  subprocess.run(compiler+(['-O'] if name.endswith('-benchmark') and not args.debug_benchmarks else [])+[str(sources[f]) for f in files]+[str(root/'Scripts'/(name+'-checks.swift')),'-o',str(binary)],env=env,check=True)
  env['SPEKTRAFILM_BENCHMARK_CONFIGURATION']='debug' if args.debug_benchmarks else 'optimized'
- subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export','library','lut','preview'] else []),env=env,check=True)
+ subprocess.run((simulator or [])+[str(binary)]+[str(root/a) for a in arguments]+(args.input if name in ['raw-input','processed-export','stress-export','bypass','library','lut','preview'] else []),env=env,check=True)

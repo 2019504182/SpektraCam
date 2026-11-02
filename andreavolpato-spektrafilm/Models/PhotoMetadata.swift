@@ -7,6 +7,7 @@ nonisolated struct PhotoMetadata: Codable, Equatable, Sendable {
     var format = "Photo"
     var colorSpace = "Unknown profile"
     var camera: String?
+    var lens: String?
     var exposure: String?
     var width = 0
     var height = 0
@@ -32,6 +33,7 @@ nonisolated struct PhotoMetadata: Codable, Equatable, Sendable {
         let tiff = p[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
         camera = tiff?[kCGImagePropertyTIFFModel] as? String
         let exif = p[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        lens = exif?[kCGImagePropertyExifLensModel] as? String
         capturedAt = Self.captureDate(exif: exif, tiff: tiff)
         if let gps = p[kCGImagePropertyGPSDictionary] as? [CFString: Any],
             let lat = gps[kCGImagePropertyGPSLatitude] as? Double,

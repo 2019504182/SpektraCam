@@ -9,29 +9,32 @@ struct ParameterControl: View {
 
     var body: some View {
         if definition.defaultFlag != nil {
-            Toggle(
+            AdaptiveToggle(
+                definition.title,
                 isOn: Binding(
                     get: { session.recipe.flag(definition.id) },
                     set: { value in session.update(key: definition.id) { $0.flags[definition.id] = value } })
-            ) { Text(definition.title).fixedSize(horizontal: false, vertical: true) }
-            .toggleStyle(.switch)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            )
             .accessibilityIdentifier(definition.id)
         } else if definition.defaultChoice != nil {
-            Picker(
-                definition.title,
-                selection: Binding(
+            Menu {
+                Picker(definition.title, selection: Binding(
                     get: { session.recipe.choice(definition.id) },
                     set: { value in session.update(key: definition.id) { $0.choices[definition.id] = value } }
-                )
-            ) {
-                ForEach(definition.options, id: \.self) {
-                    Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0)
+                )) {
+                    ForEach(definition.options, id: \.self) {
+                        Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0)
+                    }
                 }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(definition.title).foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    Text(session.recipe.choice(definition.id).replacingOccurrences(of: "_", with: " ").capitalized)
+                        .foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                    Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
+                }.font(.caption).frame(minHeight: 32).contentShape(.rect)
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(definition.id)
         } else {
             NumericControl(
@@ -174,12 +177,17 @@ struct DefaultSlider: UIViewRepresentable {
                 snapsToDefault
                 ? .init(
                     allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue),
-                    ticks: [.init(position: position(defaultValue))]) : nil
+                    ticks: [.init(position: position(defaultValue))])
+                : .init(
+                    allowsTickValuesOnly: false, neutralValue: position(fillOrigin ?? defaultValue), ticks: []
+                )
             if let precise = slider as? PrecisionSlider {
                 precise.defaultTick = snapsToDefault ? nil : position(defaultValue)
             }
             context.coordinator.configuration = configuration
         }
+        slider.minimumValue = 0
+        slider.maximumValue = 1
         if !slider.isTracking { slider.setValue(position(value), animated: false) }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISlider, context: Context) -> CGSize? {
@@ -343,14 +351,12 @@ struct EffectSection: View {
     var showsDetails = true
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Toggle(
+            AdaptiveToggle(
+                title,
                 isOn: Binding(
                     get: { session.recipe.flag(prefix + ".active") },
                     set: { value in session.update(key: prefix) { $0.flags[prefix + ".active"] = value } })
-            ) {
-                Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
-            }
-            .toggleStyle(.switch).fixedSize(horizontal: false, vertical: true)
+            )
             .accessibilityIdentifier(prefix + ".active")
             VStack(alignment: .leading, spacing: 12) {
                 ParameterFields(session: session, prefix: prefix, names: prominent)
@@ -372,7 +378,7 @@ struct EffectDetails: View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 16) {
                 ParameterFields(session: session, prefix: prefix, excluding: ["active"] + prominent)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12).padding(.trailing, 8)
         } label: {
             Text("Details").accessibilityIdentifier(prefix + ".details")
         }.disabled(!session.recipe.flag(prefix + ".active"))

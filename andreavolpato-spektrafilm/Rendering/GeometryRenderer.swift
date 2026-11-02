@@ -32,14 +32,15 @@ enum GeometryRenderer {
         if geometry.straightenDegrees != 0 {
             let angle = geometry.straightenDegrees * .pi / 180
             let zoom = geometry.constrainedScale(in: image.extent.size)
+            let framing = geometry.boundedFraming(in: image.extent.size)
             let c = cos(angle) * zoom
             let s = sin(angle) * zoom
             let x = image.extent.midX
             let y = image.extent.midY
             let transform = CGAffineTransform(
                 a: c, b: s, c: -s, d: c,
-                tx: x - c * x + s * y,
-                ty: y - s * x - c * y)
+                tx: x - c * x + s * y + framing.x * image.extent.width,
+                ty: y - s * x - c * y - framing.y * image.extent.height)
             let bounds = image.extent
             image = normalize(image.transformed(by: transform).cropped(to: bounds))
         }

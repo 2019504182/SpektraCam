@@ -68,9 +68,13 @@ nonisolated struct CropSelection: Codable, Equatable, Sendable {
 
         if let ratio = effectiveRatio(imageAspect: imageAspect) {
             let normalizedRatio = ratio / imageAspect
-            if abs(delta.height) * normalizedRatio > abs(delta.width) {
-                width = height * normalizedRatio
-            }
+            // Project the finger delta onto the constrained corner diagonal in image pixels.
+            // This avoids switching axes abruptly as the fingertip crosses the diagonal.
+            let dx = signX * delta.width
+            let dy = signY * delta.height
+            let r = normalizedRatio
+            let change = (dx * imageAspect * imageAspect + dy / r) / (imageAspect * imageAspect + 1 / (r * r))
+            width = start.width + change
             let maximum = min(availableWidth, availableHeight * normalizedRatio)
             let minimum = min(maximum, min(0.08, 0.08 * normalizedRatio))
             width = clamp(width, minimum, maximum)

@@ -10,7 +10,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
     }
     /// RAW controls precede Develop. Whole-photo monochrome is applied at the output.
     struct Tone: Codable, Equatable, Sendable {
-        var algorithm = 2
+        var algorithm = 4
         var exposureEV = 0.0
         var contrast = 1.0
         var pivot = 0.35
@@ -43,7 +43,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
             shadows = try v.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
             highlights = try v.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
             monochrome = try v.decodeIfPresent(Bool.self, forKey: .monochrome) ?? false
-            guard (1...2).contains(algorithm) else {
+            guard (1...4).contains(algorithm) else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .algorithm, in: v, debugDescription: "Unsupported tone algorithm")
             }
@@ -61,7 +61,7 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
     struct Look: Codable, Equatable, Sendable {
         var mode = LookMode.spektrafilm
         var first = LUTSlot()
-        var second = LUTSlot()
+        var second = LUTSlot(mix: 0)
         var identifiers: Set<String> { Set([first.id, second.id].compactMap { $0 }) }
     }
     var look = Look()
@@ -151,6 +151,12 @@ nonisolated struct EditRecipe: Codable, Equatable, Sendable {
         var copy = self
         copy.crop = CropSelection()
         copy.geometry = ImageGeometry()
+        return copy
+    }
+    func removingLUTs(_ ids: Set<String>) -> Self {
+        var copy = self
+        if let id = copy.look.first.id, ids.contains(id) { copy.look.first.id = nil }
+        if let id = copy.look.second.id, ids.contains(id) { copy.look.second.id = nil }
         return copy
     }
     var bypassesPrint: Bool { look.mode == .spektrafilm && scanFilm }

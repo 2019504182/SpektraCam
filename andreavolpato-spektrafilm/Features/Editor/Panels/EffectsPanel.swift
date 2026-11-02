@@ -7,6 +7,7 @@ struct EffectsPanel: View {
     }
     let session: EditorSession
     var section: Section = .grain
+    @State private var confirmStockGrain = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             switch section {
@@ -14,11 +15,17 @@ struct EffectsPanel: View {
                 EffectSection(
                     title: "Grain", prefix: "film_render.grain",
                     prominent: ["particle_area_um2", "blur"], session: session, showsDetails: false)
-                Toggle("B&W Grain", isOn: session.binding(\.monochromeGrain, key: "grain.monochrome"))
+                AdaptiveToggle("B&W Grain", isOn: session.binding(\.monochromeGrain, key: "grain.monochrome"))
                     .disabled(!session.recipe.flag("film_render.grain.active"))
                     .accessibilityIdentifier("grain.monochrome")
-                Button("Use Stock Grain", systemImage: "arrow.counterclockwise", action: session.resetGrain)
-                    .foregroundStyle(.primary).accessibilityIdentifier("grain.stockDefaults")
+                Button("Use Stock Grain", systemImage: "arrow.counterclockwise") { confirmStockGrain = true }
+                    .buttonStyle(.glass).controlSize(.small).accessibilityIdentifier("grain.stockDefaults")
+                    .confirmationDialog(
+                        "Use stock grain settings?", isPresented: $confirmStockGrain,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Use Stock Grain", action: session.resetGrain)
+                    }
                 EffectDetails(
                     prefix: "film_render.grain", prominent: ["particle_area_um2", "blur"], session: session)
             case .halation:
@@ -33,6 +40,8 @@ struct EffectsPanel: View {
                 }
                 .disabled(session.recipe.look.mode == .lut)
             case .diffusion:
+                Text("Diffusion can require substantial memory during full-size export.").font(.caption)
+                    .foregroundStyle(.secondary)
                 EffectSection(
                     title: "Camera diffusion", prefix: "camera.diffusion_filter",
                     prominent: ["filter_family", "strength"], session: session)

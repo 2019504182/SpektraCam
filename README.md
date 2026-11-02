@@ -1,6 +1,6 @@
 # SpektraCam
 
-**Version 0.2.0**
+**Version 0.2.1**
 
 SpektraCam is a photo editor for iPhone.
 It has a local library for imported photos.
@@ -41,7 +41,7 @@ Develop has two 3D `.cube` LUT slots with separate Mix controls.
 Use LUTs made for encoded sRGB photos. Log and HDR input transforms are not supported.
 RAW photo-LUT input uses the system decoder's default rendering. Film input stays scene-linear.
 The library LUT Manager shares import, rename and batch deletion with the editor picker.
-LUTs used by saved edits or Undo cannot be deleted.
+Normal deletion protects LUTs used by saved edits or Undo. Confirmed Force Delete clears their references and keeps other adjustments.
 LUT mode skips film/print color. Halation and diffusion act on linear RGB before the LUTs.
 A Portra 400 grain noise layer follows the LUTs.
 It restores the sharp density image before print/scan conversion to reduce false grain at highlight edges.
@@ -104,6 +104,16 @@ python3 Scripts/core-checks.py lut preview --input /path/first.cube /path/second
 
 The pinned Python reference has 189 passed tests and four known test failures.
 The native tests use the reference data in `Reference/Fixtures`.
+
+## Changes in 0.2.1
+
+Add native LUT reorder and confirmed force deletion. Keep photo adjustments when a LUT is removed.
+Fix HEIF gain-map brightness in SDR LUT mode, saved shadow edits, photo paging and crop panning.
+Add signed S-curve controls: zero is neutral; positive increases contrast. New adjustments use −0.35…+0.35. Older curve versions remain readable.
+Use a compact 2500–8000 K RAW slider, with wider numeric entry and as-shot reset.
+Raise the export sheet and show its dimensions above the fixed actions. Add an explicit memory-warning override.
+Process full-size LUT grading in strips. Normal 12 MP RAW and LUT exports pass on iPhone 15 Pro Max.
+Extreme full-size diffusion can still exceed device memory and terminate the app, including with the override.
 
 ## Next work
 

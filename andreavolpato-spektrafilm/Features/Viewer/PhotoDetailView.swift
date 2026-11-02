@@ -7,10 +7,14 @@ struct PhotoDetailView: View {
     let library: PhotoLibrary
     let filter: LibraryFilter
     @State private var selectedID: UUID
+    @State private var sourceLens: String?
+    private var displayMetadata: PhotoMetadata {
+        var result = photo?.metadata ?? PhotoMetadata()
+        if result.lens == nil { result.lens = sourceLens }
+        return result
+    }
     @State private var histogram = PhotoHistogram.empty
     @State private var image: UIImage?
-    @State private var previewFailure: String?
-    @State private var retry = 0
     @State private var editor: EditorSession?
     @State private var export: ExportRequest?
     @State private var working = false
@@ -30,22 +34,13 @@ struct PhotoDetailView: View {
     }
     var body: some View {
         ZStack {
-            if let image {
-                PhotoViewport(
-                    image: image, topInset: 0, edited: photo?.hasEdits == true, topAligned: false
-                )
-                .id(selectedID)
-            } else if let previewFailure {
-                ContentUnavailableView {
-                    Label("Couldn’t show photo", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(previewFailure)
-                } actions: {
-                    Button("Retry") { retry += 1 }
+            TabView(selection: $selectedID) {
+                ForEach(photos) { item in
+                    AlbumPhotoPage(photo: item, images: library.images)
+                        .tag(item.id)
                 }
-            } else {
-                ProgressView("Loading photo…")
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
             if working { ProgressView().padding().background(.regularMaterial, in: .capsule) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -54,14 +49,15 @@ struct PhotoDetailView: View {
             PhotoViewerControls(
                 photos: photos, images: library.images, selection: $selectedID,
                 working: working, develop: { prepareEditor(exporting: false) },
-                export: { prepareEditor(exporting: true) }, delete: deletePhoto
+                export: { prepareEditor(exporting: true) }, revert: revertPhoto,
+                canRevert: photo?.hasEdits == true, delete: deletePhoto
             )
             .padding(.horizontal, 16).padding(.bottom, 12)
         }
         .overlay(alignment: .top) {
             if let photo {
                 PhotoInfoPanel(
-                    title: filmTitle, subtitle: printTitle, metadata: photo.metadata,
+                    title: filmTitle, subtitle: printTitle, metadata: displayMetadata,
                     location: photo.locationName, histogram: histogram, identifier: "photo"
                 )
                 .padding(.horizontal, 12).padding(.top, 4)
@@ -75,13 +71,19 @@ struct PhotoDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) { CameraButton() }
         }
-        .task(id: "\(selectedID)-\(photo?.renderKey ?? "")-\(retry)") { await loadPreview() }
-        .task(id: selectedID) { await resolveLocation() }
+        .task(id: "\(selectedID)-\(photo?.renderKey ?? "")") { await loadPreview() }
+        .task(id: selectedID) {
+            sourceLens = nil
+            if let photo {
+                let lens = await library.files.lensName(photo)
+                guard !Task.isCancelled, photo.id == selectedID else { return }
+                sourceLens = lens
+            }
+            await resolveLocation()
+        }
         .onChange(of: selectedID) { _, _ in
             image = nil
             histogram = .empty
-            previewFailure = nil
-            retry = 0
         }
         .navigationDestination(item: $editor) { session in
             EditorView(session: session, locationName: photo?.locationName, library: library) {
@@ -124,18 +126,19 @@ struct PhotoDetailView: View {
     }
     private func loadPreview() async {
         guard let photo else { return }
-        previewFailure = nil
         do {
             let frame = try await library.images.image(photo, thumbnail: false)
             try Task.checkCancellation()
             image = UIImage(cgImage: frame)
             let stats = await HistogramWorker.shared.make(frame)
             if !Task.isCancelled { histogram = stats }
-        } catch {
-            if !Task.isCancelled {
-                image = nil
-                previewFailure = error.localizedDescription
-            }
+        } catch { if !Task.isCancelled { histogram = .empty } }
+    }
+    private func revertPhoto() {
+        working = true
+        Task {
+            defer { working = false }
+            do { try await library.revert([selectedID]) } catch { failure = error.localizedDescription }
         }
     }
     private func deletePhoto() {
@@ -231,30 +234,47 @@ private struct PhotoViewerControls: View {
     let working: Bool
     let develop: () -> Void
     let export: () -> Void
+    let revert: () -> Void
+    let canRevert: Bool
     let delete: () -> Void
+    @State private var confirmRevert = false
     var body: some View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
                 ViewThatFits(in: .horizontal) {
-                    HStack {
-                        exportButton
-                        Spacer(minLength: 12)
+                    HStack(spacing: 8) {
+                        HStack {
+                            exportButton
+                            Spacer(minLength: 0)
+                        }.frame(width: 104)
                         developButton
-                        Spacer(minLength: 12)
-                        deleteButton
+                        trailingButtons.frame(width: 104)
                     }
-                    VStack(spacing: 12) {
+                    VStack(spacing: 10) {
                         developButton
                         HStack {
                             exportButton
                             Spacer()
-                            deleteButton
+                            trailingButtons
                         }
                     }
                 }.controlSize(.large)
                 PhotoFilmstrip(photos: photos, images: images, selection: $selection)
             }
         }.disabled(working)
+    }
+    private var trailingButtons: some View {
+        HStack(spacing: 8) {
+            Button { confirmRevert = true } label: { Image(systemName: "arrow.uturn.backward").frame(width: 28, height: 28) }
+                .accessibilityLabel("Revert").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle)
+                .disabled(!canRevert).accessibilityIdentifier("photo.revert")
+                .confirmationDialog(
+                    "Revert to original?", isPresented: $confirmRevert, titleVisibility: .visible
+                ) {
+                    Button("Revert to Original", role: .destructive, action: revert)
+                }
+            deleteButton
+        }
     }
     private var developButton: some View {
         Button(action: develop) {
@@ -263,8 +283,8 @@ private struct PhotoViewerControls: View {
         }.buttonStyle(.glassProminent).accessibilityIdentifier("photo.develop")
     }
     private var exportButton: some View {
-        Button("Export", systemImage: "square.and.arrow.up", action: export)
-            .labelStyle(.iconOnly).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
+        Button(action: export) { Image(systemName: "square.and.arrow.up").frame(width: 28, height: 28) }
+            .accessibilityLabel("Export").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
                 "photo.export")
     }
     private var deleteButton: some View { PhotoDeleteButton(action: delete) }
@@ -274,8 +294,8 @@ private struct PhotoDeleteButton: View {
     let action: () -> Void
     @State private var confirmDelete = false
     var body: some View {
-        Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = true }
-            .labelStyle(.iconOnly).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
+        Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash").frame(width: 28, height: 28) }
+            .accessibilityLabel("Delete").controlSize(.regular).buttonStyle(.glass).buttonBorderShape(.circle).accessibilityIdentifier(
                 "photo.delete"
             )
             .confirmationDialog("Delete Photo?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -283,5 +303,39 @@ private struct PhotoDeleteButton: View {
             } message: {
                 Text("This removes the app copy and its edits. Your source photo stays unchanged.")
             }
+    }
+}
+
+/// Each page loads a cached preview; full originals stay outside the paging view.
+private struct AlbumPhotoPage: View {
+    let photo: LibraryPhoto
+    let images: LibraryImages
+    @State private var image: UIImage?
+    @State private var failure: String?
+    @State private var retry = 0
+    var body: some View {
+        Group {
+            if let image {
+                PhotoViewport(image: image, topInset: 0, edited: photo.hasEdits, topAligned: false)
+            } else if let failure {
+                ContentUnavailableView {
+                    Label("Couldn’t show photo", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(failure)
+                } actions: {
+                    Button("Retry") { retry += 1 }
+                }
+            } else {
+                ProgressView("Loading photo…")
+            }
+        }
+        .task(id: "\(photo.renderKey)-\(retry)") {
+            do {
+                let frame = try await images.image(photo, thumbnail: false)
+                try Task.checkCancellation()
+                image = UIImage(cgImage: frame)
+                failure = nil
+            } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+        }
     }
 }

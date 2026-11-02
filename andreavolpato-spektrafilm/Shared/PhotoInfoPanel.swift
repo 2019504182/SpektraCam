@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One fixed summary height. Expanded details overlay the photo without moving it.
 struct PhotoInfoPanel: View {
-    static let collapsedHeight: CGFloat = 72
+    static let collapsedHeight: CGFloat = 64
     let title: String
     let subtitle: String
     let metadata: PhotoMetadata
@@ -26,14 +26,14 @@ struct PhotoInfoPanel: View {
                             Text(subtitle).font(.caption2).foregroundStyle(.secondary)
                         }.lineLimit(1).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         Spacer(minLength: 0)
-                        Color.clear.frame(width: 96, height: 36)
+                        Color.clear.frame(width: 112, height: 36)
                     }
                     .padding(.horizontal, 12)
                     .frame(height: Self.collapsedHeight).contentShape(.rect)
-                    .overlay(alignment: .top) {
+                    .overlay(alignment: .bottom) {
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                            .padding(.top, 6).accessibilityHidden(true)
+                            .padding(.bottom, 3).accessibilityHidden(true)
                     }
                 }
                 .buttonStyle(.plain).accessibilityIdentifier(identifier + ".info")
@@ -44,10 +44,11 @@ struct PhotoInfoPanel: View {
                     onInteraction?()
                 } label: {
                     VStack(spacing: 3) {
-                        HistogramChart(histogram: histogram, channels: channels).frame(width: 96, height: 28)
+                        HistogramChart(histogram: histogram, channels: channels).frame(width: 112, height: 32)
+                            .overlay { Rectangle().strokeBorder(.secondary, lineWidth: 0.5) }
                         Text(channels ? "RGB" : "Luma").font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.secondary)
-                    }.frame(width: 96, height: 44).contentShape(.rect)
+                    }.frame(width: 112, height: 44).contentShape(.rect)
                 }
                 .buttonStyle(.plain).padding(.trailing, 12)
                 .accessibilityLabel(channels ? "RGB histogram" : "Brightness histogram")
@@ -66,9 +67,10 @@ struct PhotoInfoPanel: View {
                         if let camera = metadata.camera {
                             LabeledContent("Camera", value: camera.trimmingCharacters(in: .whitespaces))
                         }
+                        if let lens = metadata.lens { LabeledContent("Lens", value: lens) }
                         if let exposure = metadata.exposure { LabeledContent("Exposure", value: exposure) }
                         LabeledContent("Format", value: metadata.sizeLine)
-                        LabeledContent("Color", value: metadata.colorSpace)
+                        LabeledContent("Color space", value: metadata.colorSpace)
                     }.font(.subheadline).padding(.horizontal, 12).padding(.bottom, 12)
                         .onGeometryChange(for: CGFloat.self) {
                             $0.size.height
