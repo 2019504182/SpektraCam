@@ -1,0 +1,182 @@
+[
+  {
+    "symbol": "avfoundation/avcapturedevice/nominalfocallengthin35mmfilm",
+    "url": "https://developer.apple.com/documentation/avfoundation/avcapturedevice/nominalfocallengthin35mmfilm",
+    "platforms": [
+      {
+        "introducedAt": "26.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "26.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "avfoundation/avcapturevideodataoutput/deliverspreviewsizedoutputbuffers",
+    "url": "https://developer.apple.com/documentation/avfoundation/avcapturevideodataoutput/deliverspreviewsizedoutputbuffers",
+    "platforms": [
+      {
+        "introducedAt": "13.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "13.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "avfoundation/avcapturedevice/rotationcoordinator",
+    "url": "https://developer.apple.com/documentation/avfoundation/avcapturedevice/rotationcoordinator",
+    "platforms": [
+      {
+        "introducedAt": "17.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "17.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "avfoundation/avcapturephotooutput/capturereadiness-swift.property",
+    "url": "https://developer.apple.com/documentation/avfoundation/avcapturephotooutput/capturereadiness-swift.property",
+    "platforms": [
+      {
+        "introducedAt": "17.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "17.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "mapkit/mkreversegeocodingrequest",
+    "url": "https://developer.apple.com/documentation/mapkit/mkreversegeocodingrequest",
+    "platforms": [
+      {
+        "introducedAt": "26.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "26.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "mapkit/mkmapitem/addressrepresentations",
+    "url": "https://developer.apple.com/documentation/mapkit/mkmapitem/addressrepresentations",
+    "platforms": [
+      {
+        "introducedAt": "26.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "26.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "swiftui/glasseffectcontainer",
+    "url": "https://developer.apple.com/documentation/swiftui/glasseffectcontainer",
+    "platforms": [
+      {
+        "introducedAt": "26.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "26.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "swiftui/toolbarspacer",
+    "url": "https://developer.apple.com/documentation/swiftui/toolbarspacer",
+    "platforms": [
+      {
+        "introducedAt": "26.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "26.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "metal/mtlcompileoptions/mathmode",
+    "url": "https://developer.apple.com/documentation/metal/mtlcompileoptions/mathmode",
+    "platforms": [
+      {
+        "introducedAt": "18.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "18.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "metalperformanceshadersgraph/mpsgraphfftdescriptor",
+    "url": "https://developer.apple.com/documentation/metalperformanceshadersgraph/mpsgraphfftdescriptor",
+    "platforms": [
+      {
+        "introducedAt": "17.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "17.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "coreimage/cirawfilter",
+    "url": "https://developer.apple.com/documentation/coreimage/cirawfilter",
+    "platforms": [
+      {
+        "introducedAt": "15.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "15.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  },
+  {
+    "symbol": "swiftdata/modelcontainer",
+    "url": "https://developer.apple.com/documentation/swiftdata/modelcontainer",
+    "platforms": [
+      {
+        "introducedAt": "17.0",
+        "name": "iOS"
+      },
+      {
+        "introducedAt": "17.0",
+        "name": "iPadOS"
+      }
+    ],
+    "status": "read"
+  }
+]
