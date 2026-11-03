@@ -4,7 +4,7 @@ import Foundation
 @main struct Checks {
     static func main() async throws {
         let directory = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(
-            "andreavolpato-spektrafilm/Resources/ModelData")
+            "SpektraCam/Resources/ModelData")
         let library = try ModelLibrary(directory: directory)
         let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
             try String(
@@ -18,8 +18,8 @@ import Foundation
         let image = try PhotoColorBridge.workingImage(
             values.withUnsafeBytes { Data($0) }, width: 256, height: 1, encoded: false)
         for contrast in [0.65, 1, 1.35] {
-            for shadows in [-2.0, 0, 2] {
-                for highlights in [-2.0, 0, 2] {
+            for shadows in [-5.0, -2, 0, 2, 5] {
+                for highlights in [-5.0, -2, 0, 2, 5] {
                     var tone = EditRecipe.Tone()
                     tone.contrast = contrast
                     tone.shadows = shadows
@@ -30,10 +30,24 @@ import Foundation
                     precondition(
                         zip(result, result.dropFirst()).allSatisfy { $0.x < $1.x },
                         "Scene tone reversed tonal order")
-                    precondition(result.last!.x > 1, "Tone clipped HDR headroom")
+                    if highlights >= -2 {
+                        precondition(result.last!.x > 1, "Tone clipped HDR headroom")
+                    }
                 }
             }
         }
+        var wide = EditRecipe.Tone()
+        wide.shadows = 5
+        wide.highlights = -5
+        try RawAdjustments.validate(wide)
+        wide.shadows = -5
+        wide.highlights = 5
+        try RawAdjustments.validate(wide)
+        wide.shadows = 5.01
+        do {
+            try RawAdjustments.validate(wide)
+            preconditionFailure("Shadow hard limit was ignored")
+        } catch RawAdjustments.Failure.parameters {}
         var tone = EditRecipe.Tone()
         tone.contrast = 1.35
         precondition(ToneRenderer.curve(2, tone: tone) > 2, "HDR values bypass the contrast curve")

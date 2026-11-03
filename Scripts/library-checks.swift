@@ -16,7 +16,7 @@ import UniformTypeIdentifiers
         {
             let copied = temporary.appendingPathComponent("Snapshot")
             try FileManager.default.copyItem(at: URL(fileURLWithPath: supplied), to: copied)
-            let resources = project.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+            let resources = project.appendingPathComponent("SpektraCam/Resources/ModelData")
             let saved = try PhotoLibrary(
                 root: copied, cache: temporary.appendingPathComponent("RecoveredCache"),
                 modelDirectory: resources)
@@ -56,7 +56,7 @@ import UniformTypeIdentifiers
         let forced = try PhotoLibrary(
             root: temporary.appendingPathComponent("ForceLibrary"),
             cache: temporary.appendingPathComponent("ForceCache"),
-            modelDirectory: project.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"))
+            modelDirectory: project.appendingPathComponent("SpektraCam/Resources/ModelData"))
         let forcePhoto = try await forced.importPhoto(source, assetIdentifier: nil)
         let cube = temporary.appendingPathComponent("Named.cube")
         let cubeRows = "0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n"
@@ -93,14 +93,14 @@ import UniformTypeIdentifiers
         let reopened = try PhotoLibrary(
             root: temporary.appendingPathComponent("ForceLibrary"),
             cache: temporary.appendingPathComponent("ForceCache"),
-            modelDirectory: project.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"))
+            modelDirectory: project.appendingPathComponent("SpektraCam/Resources/ModelData"))
         let reopenedRecipe = try reopened.recipe(forcePhoto.id)
         precondition(reopenedRecipe == cleared)
         print(
             "PASS: force-delete clears deleted LUT references, retains the other slot/pending edits/originals, and survives restart"
         )
         let originalBytes = try Data(contentsOf: source)
-        let dataDirectory = project.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+        let dataDirectory = project.appendingPathComponent("SpektraCam/Resources/ModelData")
         var library: PhotoLibrary? = try PhotoLibrary(root: root, cache: cache, modelDirectory: dataDirectory)
         precondition(library!.photos.isEmpty)
         let photo = try await library!.importPhoto(source, assetIdentifier: "fixture")

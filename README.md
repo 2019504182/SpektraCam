@@ -1,6 +1,6 @@
 # SpektraCam
 
-**Version 0.2.2**
+**Version 0.2.3**
 
 SpektraCam is a photo editor for iPhone.
 It has a local library for imported photos.
@@ -47,7 +47,7 @@ A Portra 400 grain noise layer follows the LUTs.
 It restores the sharp density image before print/scan conversion to reduce false grain at highlight edges.
 These effects are an RGB adaptation. They do not form a full spectral emulsion model.
 
-Halation Amount ranges from 0 to 20×. The stock default remains 1×.
+Halation Amount ranges from 0 to 50×. The stock default remains 1×.
 Scatter is a 0–100% light mixture, with a default of 100%.
 Physical effect radii use micrometres. Grain Blur uses working-image pixels, as in the pinned source.
 
@@ -58,7 +58,7 @@ Processing keeps floating-point headroom until the final SDR conversion.
 
 Requirements: Xcode 27.2, iOS 27.2 or later, and Python 3 for the test scripts.
 
-1. Open `andreavolpato-spektrafilm.xcodeproj` in Xcode.
+1. Open `SpektraCam.xcodeproj` in Xcode.
 2. Select an iPhone Simulator.
 3. Run the app.
 
@@ -105,6 +105,13 @@ python3 Scripts/core-checks.py lut preview --input /path/first.cube /path/second
 The pinned Python reference has 189 passed tests and four known test failures.
 The native tests use the reference data in `Reference/Fixtures`.
 
+## Changes in 0.2.3
+
+Add English and Simplified Chinese, with the native iPhone language setting.
+Rename the Xcode project, scheme and folders to SpektraCam. Keep the bundle ID and model module for library compatibility.
+Move Print balance above Dye couplers. Use the same range button for print balance and Highlights/Shadows (±2 or ±5).
+Show all seven photo detail rows, including the source color space. Raise Halation Amount to 50×.
+
 ## Changes in 0.2.2
 
 Use native photo paging. Fix cancelled swipes and zoom-to-fit paging.
@@ -130,6 +137,20 @@ Decrease memory use for large RAW exports and diffusion.
 Validate genuine iPhone and Indigo DNG files.
 
 Current export format: SDR, sRGB, 8-bit.
+
+## TestFlight
+
+TestFlight needs [Apple Developer Program membership](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases) and an [App Store Connect app record](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/).
+Use the existing bundle ID: `io.github.runzeni.andreavolpato-spektrafilm`.
+In Xcode, select **SpektraCam → Any iOS Device**, then **Product → Archive**.
+In Organizer, use **Distribute App → App Store Connect** after membership and distribution signing are set.
+Add beta test information and a feedback address. Host the privacy statement below at a public URL.
+Test import, RAW capture, saved edits, normal export, language changes and delete/revert on iPhone.
+Full-size diffusion can still exceed memory. Keep this limit in the beta test notes; the warning override can terminate the app.
+
+## Privacy statement · draft
+
+SpektraCam has no account, ads, tracking or analytics. Photos, edits and imported LUTs stay in the app library on the device. Camera access captures RAW photos. Optional location access adds capture coordinates. Apple MapKit may receive photo coordinates to resolve place names. Photos access saves exported images. Data leaves the app when you choose a system export or share action, or use links that open a browser. System services, iCloud backups and TestFlight diagnostics follow Apple's settings and privacy terms. The app uses timing APIs for internal measurements and timers; its privacy manifest declares this use. Review this draft before public use.
 
 ## License
 

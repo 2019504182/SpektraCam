@@ -6,7 +6,7 @@ import ImageIO
 @main struct Checks {
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let data = root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+        let data = root.appendingPathComponent("SpektraCam/Resources/ModelData")
         let width = 1080
         let height = 810
         let space = CGColorSpace(name: CGColorSpace.sRGB)!

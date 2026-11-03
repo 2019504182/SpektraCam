@@ -9,7 +9,7 @@ private struct Fixture: Decodable { let width: Int, height: Int, input: [[Double
             Fixture.self,
             from: Data(contentsOf: root.appendingPathComponent("Reference/Fixtures/spatial-pipeline.json")))
         let library = try ModelLibrary(
-            directory: root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"))
+            directory: root.appendingPathComponent("SpektraCam/Resources/ModelData"))
         let input = fixture.input.map(ModelLibrary.vector)
         var maximum = 0.0
         var count = 0

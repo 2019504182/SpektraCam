@@ -5,7 +5,7 @@ import Foundation
     static func main() async throws {
         let args = CommandLine.arguments
         let directory = URL(fileURLWithPath: args[1]).appendingPathComponent(
-            "andreavolpato-spektrafilm/Resources/ModelData")
+            "SpektraCam/Resources/ModelData")
         let library = try ModelLibrary(directory: directory)
         let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
             try String(

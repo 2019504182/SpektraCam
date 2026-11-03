@@ -17,9 +17,9 @@ if requested_simulator:
 ui_tests = "--ui-tests" in sys.argv
 if ui_tests and not devices:
     raise SystemExit("Boot a Simulator before running UI checks.")
-scheme = "andreavolpato-spektrafilm"
+scheme = "SpektraCam"
 destination = "id=" + devices[0]["udid"] if devices else "generic/platform=iOS Simulator"
-args = [ENV["DEVELOPER_DIR"] + "/usr/bin/xcodebuild", "-project", str(ROOT / "andreavolpato-spektrafilm.xcodeproj"), "-scheme", scheme, "-configuration", "Debug", "-sdk", "iphonesimulator", "-destination", destination, "-derivedDataPath", str(OUTPUT), "CODE_SIGNING_ALLOWED=NO"]
+args = [ENV["DEVELOPER_DIR"] + "/usr/bin/xcodebuild", "-project", str(ROOT / "SpektraCam.xcodeproj"), "-scheme", scheme, "-configuration", "Debug", "-sdk", "iphonesimulator", "-destination", destination, "-derivedDataPath", str(OUTPUT), "CODE_SIGNING_ALLOWED=NO"]
 if ui_tests:
     args += ["-parallel-testing-enabled", "NO", "-resultBundlePath", str(OUTPUT / ("editor-checks-" + str(time.time_ns()) + ".xcresult")), "test"]
 else:
@@ -36,6 +36,6 @@ if "--run" in sys.argv and not ui_tests:
     if not devices:
         raise SystemExit("No simulator is booted; build succeeded.")
     device = devices[0]["udid"]
-    app = OUTPUT / "Build/Products/Debug-iphonesimulator/andreavolpato-spektrafilm.app"
+    app = OUTPUT / "Build/Products/Debug-iphonesimulator/SpektraCam.app"
     subprocess.run([SIM, "install", device, str(app)], env=ENV, check=True)
     subprocess.run([SIM, "launch", "--terminate-running-process", device, "io.github.runzeni.andreavolpato-spektrafilm"], env=ENV, check=True)

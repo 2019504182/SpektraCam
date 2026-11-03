@@ -9,7 +9,7 @@ from spektrafilm.model.illuminants import standard_illuminant
 from spektrafilm.utils.io import read_neutral_print_filters
 from spektrafilm.utils.spectral_upsampling import HANATOS2025_SPECTRA_LUT,eval_spectral_bandpass_window,_quad2tri,_tri2quad,_illuminant_to_xy
 from spektrafilm.utils.gamut_compression import compress_xy,InputGamutCompressSpec
-F=ROOT/'Reference/Fixtures';OUT=ROOT/'andreavolpato-spektrafilm/Resources/ModelData';OUT.mkdir(exist_ok=True)
+F=ROOT/'Reference/Fixtures';OUT=ROOT/'SpektraCam/Resources/ModelData';OUT.mkdir(exist_ok=True)
 upsampling=json.loads((F/'upsampling-stages.json').read_text());gamut=json.loads((F/'gamut-stages.json').read_text())['cases'][0]
 tables=(F/'hanatos-tables.f64').read_bytes();assert hashlib.sha256(tables).hexdigest()==upsampling['tablesSHA256']
 profiles={};cmfs=np.asarray(STANDARD_OBSERVER_CMFS[:])

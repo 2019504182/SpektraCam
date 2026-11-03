@@ -40,7 +40,7 @@ import Foundation
             let renderer = PhotoRenderer(
                 source: photo.preview,
                 directory: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent(
-                    "andreavolpato-spektrafilm/Resources/ModelData"), data: data)
+                    "SpektraCam/Resources/ModelData"), data: data)
             for key in [
                 "film_render.grain.active", "film_render.halation.active", "camera.diffusion_filter.active",
                 "enlarger.diffusion_filter.active",

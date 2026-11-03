@@ -7,7 +7,7 @@ private func linear(_ x: Float) -> Double {
 @main struct Checks {
     static func main() async throws {
         let directory = URL(fileURLWithPath: CommandLine.arguments[1])
-            .appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+            .appendingPathComponent("SpektraCam/Resources/ModelData")
         let sources = try ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"].map {
             try String(contentsOf: directory.appendingPathComponent($0 + ".metalSource"), encoding: .utf8)
         }

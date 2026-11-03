@@ -20,7 +20,7 @@ import ImageIO
         } catch let failure as RenderMemoryBudget.Failure { precondition(failure.estimated == nil) }
         let renderer = PhotoRenderer(
             source: photo.preview,
-            directory: project.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"),
+            directory: project.appendingPathComponent("SpektraCam/Resources/ModelData"),
             data: data, temperature: photo.rawTemperature)
         let start = ProcessInfo.processInfo.systemUptime
         let result = try await renderer.export(

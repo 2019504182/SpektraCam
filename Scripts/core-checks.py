@@ -5,8 +5,8 @@ root=pathlib.Path(__file__).resolve().parents[1]
 out=pathlib.Path('/private/tmp/spektrafilm-build');out.mkdir(exist_ok=True)
 xcode=pathlib.Path('/Applications/Xcode.app/Contents/Developer')
 env=os.environ.copy();env['DEVELOPER_DIR']=str(xcode)
-sources = {p.stem: p for p in (root/'andreavolpato-spektrafilm').rglob('*.swift')}
-assert len(sources) == len(list((root/'andreavolpato-spektrafilm').rglob('*.swift'))), 'Duplicate Swift file names'
+sources = {p.stem: p for p in (root/'SpektraCam').rglob('*.swift')}
+assert len(sources) == len(list((root/'SpektraCam').rglob('*.swift'))), 'Duplicate Swift file names'
 checks={
  'color-benchmark':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline','MetalModelResources','MetalColorPipeline'],['.']),
  'color-pipeline':(['ImageGeometry','CropSelection','EditRecipe','ParameterCatalog','FilmStock','StockDefaults','SpectralCore','CouplerCore','UpsamplingCore','AppearanceCore','GamutCore','PrintExposureCore','PrintChemistryCore','MeteringCore','ModelLibrary','ExposureTableCore','ColorPipeline'],['.']),

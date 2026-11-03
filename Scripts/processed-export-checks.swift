@@ -5,7 +5,7 @@ import ImageIO
 @main struct Checks {
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let directory = root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+        let directory = root.appendingPathComponent("SpektraCam/Resources/ModelData")
         let paths = Array(CommandLine.arguments.dropFirst(2))
         guard !paths.isEmpty else {
             print("SKIP: provide source images with --input")

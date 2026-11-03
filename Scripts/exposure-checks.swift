@@ -4,7 +4,7 @@ import Foundation
     static func main() throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let library = try ModelLibrary(
-            directory: root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"))
+            directory: root.appendingPathComponent("SpektraCam/Resources/ModelData"))
         typealias RGB = SIMD3<Double>
         let gray = [RGB(repeating: 0.184)]
         func output(_ recipe: EditRecipe) throws -> RGB {

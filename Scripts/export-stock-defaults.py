@@ -16,5 +16,5 @@ for path in sorted((ROOT/'Reference/upstream/src/spektrafilm/data/profiles').glo
  lines.append('        '+json.dumps(path.stem)+': [')
  for key,value in items.items():lines.append('            '+json.dumps(key)+': '+str(value)+',')
  lines.append('        ],')
-lines+=['    ]','}'];(ROOT/'andreavolpato-spektrafilm/Models/StockDefaults.swift').write_text('\n'.join(lines)+'\n')
+lines+=['    ]','}'];(ROOT/'SpektraCam/Models/StockDefaults.swift').write_text('\n'.join(lines)+'\n')
 print('Generated exact stock defaults for 20 films')

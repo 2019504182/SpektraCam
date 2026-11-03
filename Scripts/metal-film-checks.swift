@@ -5,7 +5,7 @@ private struct Fixture: Decodable { let width: Int, height: Int, input: [[Double
 @main struct Checks {
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let data = root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData")
+        let data = root.appendingPathComponent("SpektraCam/Resources/ModelData")
         let names = ["ColorPipeline", "Spatial", "Grain", "Diffusion", "FilmPipeline"]
         let sources = try names.map {
             try String(contentsOf: data.appendingPathComponent($0 + ".metalSource"), encoding: .utf8)

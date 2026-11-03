@@ -8,7 +8,7 @@ private struct Fixture: Decodable { let cases: [Case] }
     static func main() throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let library = try ModelLibrary(
-            directory: root.appendingPathComponent("andreavolpato-spektrafilm/Resources/ModelData"))
+            directory: root.appendingPathComponent("SpektraCam/Resources/ModelData"))
         let fixture = try JSONDecoder().decode(
             Fixture.self,
             from: Data(contentsOf: root.appendingPathComponent("Reference/Fixtures/filtered-exposure.json")))

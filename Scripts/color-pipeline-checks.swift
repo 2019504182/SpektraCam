@@ -5,7 +5,7 @@ private struct Fixture: Decodable { let width: Int,height: Int,input: [[Double]]
     static func main() throws {
         let root=URL(fileURLWithPath:CommandLine.arguments[1])
         let fixture=try JSONDecoder().decode(Fixture.self,from:Data(contentsOf:root.appending(path:"Reference/Fixtures/color-pipeline.json")))
-        let library=try ModelLibrary(directory:root.appending(path:"andreavolpato-spektrafilm/Resources/ModelData"))
+        let library=try ModelLibrary(directory:root.appending(path:"SpektraCam/Resources/ModelData"))
         let input=fixture.input.map(ModelLibrary.vector)
         var maximum=0.0,count=0
         for f in fixture.cases {
