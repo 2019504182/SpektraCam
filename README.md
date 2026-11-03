@@ -1,164 +1,79 @@
 # SpektraCam
 
-**Version 0.2.3**
+**v0.2.3 · iPhone · iOS 27.2+**
 
-SpektraCam is a photo editor for iPhone.
-It has a local library for imported photos.
-It uses a native port of [spektrafilm](https://github.com/andreavolpato/spektrafilm/tree/3bb2c2d2801ff68b92019cf1dbcbb133d60832bc) by Andrea Volpato.
+此App是基于 Andrea Volpato 的 [spektrafilm][upstream] 原生移植的 iPhone 照片编辑器。
+免费、开源，支持简体中文与英文。
 
-The app uses a portrait interface.
-It has Crop, Develop, Adjust, Effects, and Export controls.
-It saves processed JPEG and PNG files to Photos.
-It also has the system share sheet.
+This App is a free, open-source iPhone photo editor built on a native port of Andrea Volpato’s [spektrafilm][upstream]. Supports Simplified Chinese and English.
 
-Import from Photos or Files. Photos appear in capture-date order, with the newest capture dates at the bottom.
-The library has RAW and Rendered filters. Tap a photo, then tap Develop.
-The app keeps the original file and saves edits as a versioned recipe.
-The library uses cached 384 px thumbnails and shares render resources when it rebuilds them.
-Editing uses a floating-point preview at 1080 px on the long edge. Export can use the original resolution.
-Thumbnails and previews can be rebuilt. Delete removes only the app copy and its edits.
+## 功能 / Features
 
-## RAW camera and LUTs
+从“照片”或“文件”导入，保留原始文件并且单独保存编辑。
+有裁剪、胶片与印相模拟、调整、颗粒、光晕和柔光，以及 JPEG/PNG 导出功能。
+界面目前仅支持 iPhone 竖屏。
 
-It captures DNG only and offers Apple ProRAW or Bayer RAW when available.
-Lens buttons use physical cameras at their native focal lengths.
-Tap the viewfinder to focus and meter. Use the vertical slider to adjust camera exposure.
-It has a preview histogram, exposure readout, grid, and shutter and completion haptics.
-Captured DNG files stay in a recovery inbox until library import succeeds.
-The DNG menu offers maximum native resolution when the selected lens supports it.
-Optional When In Use location access adds capture coordinates to the DNG.
-Capture also works without location access.
-Simulator shows an unavailable state; it cannot capture photos.
-Stop Device Hub's View Screen before using the physical camera.
-Apple blocks camera access during Device Hub interaction.
-The camera's Library button returns to the main library. Close returns to the previous screen.
+Import from Photos or Files. Keep originals and save edits separately. 
+Crop, simulate film and prints, adjust color and tone, add grain, halation and diffusion, then export JPEG or PNG. 
+The interface currently supports iPhone in portrait only.
 
-RAW dimensions come from the RAW decoder, not the embedded preview.
-The app repairs old library entries that used preview dimensions.
-The app icon uses Runze Ni's Icon Composer file. Its source vectors are in `Design/Icon`.
+简单的RAW 相机：拍摄 DNG；Apple ProRAW 和镜头支持取决于设备。
+也可以跳过spektrafilm管线，直接使用最多两个独立混合的 `.cube` 3D LUT。
+适用于编码后的 sRGB 图像，目前不支持 Log/HDR 输入变换。
 
-Develop has two 3D `.cube` LUT slots with separate Mix controls.
-Use LUTs made for encoded sRGB photos. Log and HDR input transforms are not supported.
-RAW photo-LUT input uses the system decoder's default rendering. Film input stays scene-linear.
-The library LUT Manager shares import, rename and batch deletion with the editor picker.
-Normal deletion protects LUTs used by saved edits or Undo. Confirmed Force Delete clears their references and keeps other adjustments.
-LUT mode skips film/print color. Halation and diffusion act on linear RGB before the LUTs.
-A Portra 400 grain noise layer follows the LUTs.
-It restores the sharp density image before print/scan conversion to reduce false grain at highlight edges.
-These effects are an RGB adaptation. They do not form a full spectral emulsion model.
+The simple RAW camera captures DNG; Apple ProRAW and lens support depend on the device. 
+You can also choose to bypass the spektrafilm pipeline and use up to two `.cube` 3D LUT slots have separate Mix controls. 
+Use LUTs for encoded sRGB images; Log/HDR input transforms are not supported.
 
-Halation Amount ranges from 0 to 50×. The stock default remains 1×.
-Scatter is a 0–100% light mixture, with a default of 100%.
-Physical effect radii use micrometres. Grain Blur uses working-image pixels, as in the pinned source.
+## 局限 / Limitations
 
-Exposure, S-curve, pivot, highlights, shadows, white balance and saturation precede Develop.
-Processing keeps floating-point headroom until the final SDR conversion.
+**SpektraCam  只是提供近似胶片模拟，并不能精确还原某款胶片或实际工艺，也无法匹配不同相机传感器带来的差异。** 
+胶片与印相数据主要来自于厂商官方的技术资料和公开研究，由 spektrafilm项目 重建与建模，作者并没有自行扫描或测量实体胶片来建立这些模型。[数据来源][profile-data] · [模型说明][model-notes]
 
-## Build
+**SpektraCam provides an approximate film simulation, not a precise reproduction of a film stock or process; It also unable to match the discrepancies among camera sensors.** 
+Film and print data come mainly from official manufacturer datasheets and published research, reconstructed and modelled by spektrafilm. Missing data are filled using model estimates and assumptions. The author did not built these profiles from its own film scans or physical measurements. [Data sources][profile-data] · [Model notes][model-notes]
 
-Requirements: Xcode 27.2, iOS 27.2 or later, and Python 3 for the test scripts.
+厂商提供的曲线描述的是指定测试条件下的代表性的表现，不能保证每盒或每卷胶片的结果。各种因素，比如光源、曝光、冲洗方法和药液状态、印相、扫描、胶片批次和存放条件都会对结果造成差异。[厂商说明示例][kodak]
 
-1. Open `SpektraCam.xcodeproj` in Xcode.
-2. Select an iPhone Simulator.
-3. Run the app.
+Published curves describe representative behavior under specified test conditions, not a guarantee for each box or roll. Lighting, exposure, development method and chemistry, printing, scanning, film batch and storage can all change the result. [Manufacturer example][kodak]
 
-For device tests, select your Apple Developer team.
+Spektrafilm输入是解码后的 RGB 图像，而不是场景的实测光谱。
+同时，胶片模型没有针对每款相机传感器的实测光谱响应来单独标定；相机差异和 RAW 解码方式会很大程度影响结果。
 
-## Code map
+Input is decoded RGB, not measured scene spectra. 
+The film model has no separate calibration for each camera sensor’s measured spectral response. Camera and RAW-decoding differences can affect the result.
 
-Folders in Xcode match the folders on disk. See [Apple's folder guide](https://developer.apple.com/documentation/xcode/managing-files-and-folders-in-your-xcode-project).
+LUT 模式中的颗粒、光晕与柔光是 RGB 适配，不是完整的光谱乳剂模型。
+目前导出仅支持 SDR、sRGB、8 位。全分辨率导出受设备内存限制，极端的柔光设置可能导致 App 退出。
 
-| Folder | Contents |
-| --- | --- |
-| `App` | App start and root view |
-| `Features` | Library, Viewer, Editor, Export, Camera, and LUT |
-| `Shared` | Reused views and photo badges |
-| `Models` | Edit recipe, profiles, and metadata |
-| `Rendering` | CPU and Metal processing |
-| `Resources` | Assets, profiles, tables, and shaders |
+Grain, halation and diffusion in LUT mode are RGB adaptations, not a complete spectral emulsion model. 
+Export is currently SDR, sRGB, 8-bit only. Export at full resolution is limited by device memory; extreme diffusion settings can terminate the app.
 
-Start with `App/ContentView.swift`. Open `Features/Viewer` for the photo view or `Features/Editor` for editing controls.
+## 构建 / Build
 
-## Tests
+使用 Xcode 27.2 打开 [SpektraCam.xcodeproj](SpektraCam.xcodeproj)，选择模拟器或 iPhone 后运行。
+真机安装需要选择自己的开发团队。Python 3 用于本机测试；UI 测试需先在测试模拟器中加入两张不同照片。
 
-Run the native tests:
+Open [SpektraCam.xcodeproj](SpektraCam.xcodeproj) in Xcode 27.2, select a Simulator or iPhone, and run. Select your development team for device installation. Python 3 runs the native checks; UI tests need two different photos in the test Simulator.
 
 ```sh
 python3 Scripts/core-checks.py
-```
-
-For UI tests, add two different rendered photos to the Simulator photo library.
-UI tests use a separate app library. They do not reset the user library.
-Run the UI tests:
-
-```sh
 python3 Scripts/build-and-run.py --ui-tests
 ```
 
-Set `SPEKTRACAM_SIMULATOR_ID` to select a booted test Simulator.
-Test two local LUTs without adding them to the repository:
+## 隐私 / Privacy
 
-```sh
-python3 Scripts/core-checks.py lut preview --input /path/first.cube /path/second.cube
-```
+无账户、广告、追踪或分析 SDK。照片、编辑与 LUT 保存在设备本地。可选定位会写入拍摄位置；Apple 地图服务可能接收照片坐标以查询地名。导出、分享、系统备份与 TestFlight 诊断遵循对应的系统设置与隐私条款。
 
-The pinned Python reference has 189 passed tests and four known test failures.
-The native tests use the reference data in `Reference/Fixtures`.
+No accounts, ads, tracking or analytics SDKs. Photos, edits and LUTs stay on the device. Optional location access adds capture coordinates; Apple MapKit may receive photo coordinates to resolve place names. Export, sharing, system backups and TestFlight diagnostics follow the relevant system settings and privacy terms.
 
-## Changes in 0.2.3
+## 许可与致谢 / License and credits
 
-Add English and Simplified Chinese, with the native iPhone language setting.
-Rename the Xcode project, scheme and folders to SpektraCam. Keep the bundle ID and model module for library compatibility.
-Move Print balance above Dye couplers. Use the same range button for print balance and Highlights/Shadows (±2 or ±5).
-Show all seven photo detail rows, including the source color space. Raise Halation Amount to 50×.
+代码采用 [GPLv3](LICENSE)；spektrafilm 配置与 LUT 数据采用 [CC BY-SA 4.0](SPEKTRAFILM_LICENSE.txt)。保留 Andrea Volpato 的原始署名、许可及[第三方声明](ThirdPartyNotices.txt)。
 
-## Changes in 0.2.2
+Code: [GPLv3](LICENSE). spektrafilm profiles and LUT data: [CC BY-SA 4.0](SPEKTRAFILM_LICENSE.txt). Preserve Andrea Volpato’s attribution, the licenses and [third-party notices](ThirdPartyNotices.txt).
 
-Use native photo paging. Fix cancelled swipes and zoom-to-fit paging.
-Remove slider snapping. Keep default marks, reset and haptics. Keep one undo step per drag.
-Shorten iPhone lens text and update the app icon.
-Use a metered, scene-referred tone curve for new adjustments. Keep HDR headroom and older saved looks.
-Check 11 Indigo JPEGs, genuine CR2/ProRAW/Ricoh DNG, RAW order and the native reference cases.
-
-## Changes in 0.2.1
-
-Add native LUT reorder and confirmed force deletion. Keep photo adjustments when a LUT is removed.
-Fix HEIF gain-map brightness in SDR LUT mode, saved shadow edits, photo paging and crop panning.
-Add signed S-curve controls: zero is neutral; positive increases contrast. New adjustments use −0.35…+0.35. Older curve versions remain readable.
-Use a compact 2500–8000 K RAW slider, with wider numeric entry and as-shot reset.
-Raise the export sheet and show its dimensions above the fixed actions. Add an explicit memory-warning override.
-Process full-size LUT grading in strips. Normal 12 MP RAW and LUT exports pass on iPhone 15 Pro Max.
-Extreme full-size diffusion can still exceed device memory and terminate the app, including with the override.
-
-## Next work
-
-Complete the physical-device test matrix, including Max resolution and interruptions.
-Decrease memory use for large RAW exports and diffusion.
-Validate genuine iPhone and Indigo DNG files.
-
-Current export format: SDR, sRGB, 8-bit.
-
-## TestFlight
-
-TestFlight needs [Apple Developer Program membership](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases) and an [App Store Connect app record](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/).
-Use the existing bundle ID: `io.github.runzeni.andreavolpato-spektrafilm`.
-In Xcode, select **SpektraCam → Any iOS Device**, then **Product → Archive**.
-In Organizer, use **Distribute App → App Store Connect** after membership and distribution signing are set.
-Add beta test information and a feedback address. Host the privacy statement below at a public URL.
-Test import, RAW capture, saved edits, normal export, language changes and delete/revert on iPhone.
-Full-size diffusion can still exceed memory. Keep this limit in the beta test notes; the warning override can terminate the app.
-
-## Privacy statement · draft
-
-SpektraCam has no account, ads, tracking or analytics. Photos, edits and imported LUTs stay in the app library on the device. Camera access captures RAW photos. Optional location access adds capture coordinates. Apple MapKit may receive photo coordinates to resolve place names. Photos access saves exported images. Data leaves the app when you choose a system export or share action, or use links that open a browser. System services, iCloud backups and TestFlight diagnostics follow Apple's settings and privacy terms. The app uses timing APIs for internal measurements and timers; its privacy manifest declares this use. Review this draft before public use.
-
-## License
-
-[GPLv3](LICENSE) applies to the code.
-[CC BY-SA 4.0](SPEKTRAFILM_LICENSE.txt) applies to profile and LUT data.
-Keep the license files and [third-party notices](ThirdPartyNotices.txt).
-
-## Project text
-
-Use [ASD-STE100](https://www.asd-ste100.org/about_STE.html) for project text and commit messages.
-Keep commit messages short.
+[upstream]: https://github.com/andreavolpato/spektrafilm/tree/3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
+[profile-data]: https://github.com/andreavolpato/spektrafilm/blob/3bb2c2d2801ff68b92019cf1dbcbb133d60832bc/src/spektrafilm/profiles/io.py
+[model-notes]: https://github.com/andreavolpato/spektrafilm/blob/3bb2c2d2801ff68b92019cf1dbcbb133d60832bc/README.md#introduction
+[kodak]: https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/e4000_ektachrome_100.pdf
