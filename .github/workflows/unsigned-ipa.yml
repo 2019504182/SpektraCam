@@ -1,0 +1,211 @@
+name: Build unsigned iPhone IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: SpektraCam / Xcode 27.2 / iOS 27.2
+    runs-on: xcode-27
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      DEPLOYMENT_TARGET: '27.2'
+
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Xcode and iPhone SDK
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs dist
+          {
+            echo "ARCHIVE_PATH=$RUNNER_TEMP/SpektraCam.xcarchive"
+            echo "DERIVED_DATA=$RUNNER_TEMP/SpektraCam-DerivedData"
+            echo "PACKAGE_DIR=$RUNNER_TEMP/SpektraCam-Package"
+          } >> "$GITHUB_ENV"
+          exec > >(tee ci-logs/toolchain.log) 2>&1
+          echo "Runner image: ${ImageOS:-unknown} / ${ImageVersion:-unknown}"
+          sw_vers
+          uname -m
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::Xcode 27.2 is missing from this runner image. No fallback toolchain will be used."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          xcodebuild -version
+          [[ "$(xcodebuild -version | head -n 1)" == 'Xcode 27.2' ]] || {
+            echo "::error::The selected Xcode is not 27.2."
+            exit 1
+          }
+          xcrun swift --version
+          xcodebuild -showsdks
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          [[ "$sdk_version" == 27.2* ]] || {
+            echo "::error::Expected an iOS 27.2 SDK; found $sdk_version."
+            exit 1
+          }
+          # The published runner inventory currently points this alias at a 27.2 RC.
+          # Record the actual build number instead of claiming it is the final release.
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$DEVELOPER_DIR/../Info.plist"
+          git rev-parse HEAD | tee ci-logs/source-commit.txt
+
+      - name: Inspect project and effective build settings
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project SpektraCam.xcodeproj 2>&1 | tee ci-logs/project.log
+          xcodebuild -showBuildSettings \
+            -project SpektraCam.xcodeproj -scheme SpektraCam \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            2>&1 | tee ci-logs/build-settings.log
+
+      - name: Archive unsigned arm64 device app
+        run: |
+          set -euo pipefail
+          # Use the shared scheme's Archive action, which excludes the UI-test target.
+          # Do not use Scripts/build-and-run.py: that script builds for Simulator.
+          xcodebuild \
+            -project SpektraCam.xcodeproj -scheme SpektraCam \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$GITHUB_WORKSPACE/ci-logs/archive.xcresult" \
+            IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            archive 2>&1 | tee ci-logs/archive.log
+
+      - name: Verify app and package IPA for Sideloadly
+        run: |
+          set -euo pipefail
+          app="$ARCHIVE_PATH/Products/Applications/SpektraCam.app"
+          [[ -d "$app" ]] || { echo '::error::Archive contains no SpektraCam.app'; exit 1; }
+          mkdir -p "$PACKAGE_DIR/Payload"
+          ditto "$app" "$PACKAGE_DIR/Payload/SpektraCam.app"
+          export APP_PATH="$PACKAGE_DIR/Payload/SpektraCam.app"
+          # There are no extensions or third-party frameworks in the audited project.
+          # Remove any incidental ad-hoc signing from executable code before packaging.
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          app = pathlib.Path(os.environ['APP_PATH'])
+          for path in app.rglob('*'):
+              if path.is_file() and not path.is_symlink():
+                  kind = subprocess.check_output(['file', '-b', str(path)], text=True)
+                  if 'Mach-O' in kind:
+                      signed = subprocess.run(['codesign', '-d', str(path)], capture_output=True)
+                      if signed.returncode == 0:
+                          subprocess.run(['codesign', '--remove-signature', str(path)], check=True)
+          for path in list(app.rglob('_CodeSignature')):
+              import shutil
+              shutil.rmtree(path)
+          for path in app.rglob('embedded.mobileprovision'):
+              path.unlink()
+          PY
+          python3 - <<'PY' 2>&1 | tee ci-logs/package-verification.log
+          import hashlib, json, os, pathlib, plistlib, re, subprocess
+          app = pathlib.Path(os.environ['APP_PATH'])
+          with (app / 'Info.plist').open('rb') as stream:
+              info = plistlib.load(stream)
+          assert info['CFBundlePackageType'] == 'APPL', info
+          assert info['MinimumOSVersion'] == os.environ['DEPLOYMENT_TARGET'], info
+          assert info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'], info
+          assert 1 in info.get('UIDeviceFamily', []), 'iPhone is not a supported family'
+          for key in ['NSCameraUsageDescription', 'NSLocationWhenInUseUsageDescription',
+                      'NSPhotoLibraryAddUsageDescription']:
+              assert info.get(key), f'Missing privacy purpose string: {key}'
+          executable = app / info['CFBundleExecutable']
+          assert executable.is_file(), executable
+          archs = subprocess.check_output(['xcrun', 'lipo', '-archs', str(executable)], text=True).strip()
+          assert archs == 'arm64', f'Expected device arm64, got {archs}'
+          load_commands = subprocess.check_output(['xcrun', 'otool', '-l', str(executable)], text=True)
+          pathlib.Path('ci-logs/macho-load-commands.txt').write_text(load_commands)
+          build = subprocess.check_output(['xcrun', 'vtool', '-show-build', str(executable)], text=True)
+          print(build)
+          assert re.search(r'platform\s+(IOS|2)\s*$', build, re.M), 'Not an iOS device binary'
+          minimum = re.search(r'minos\s+(\S+)', build)
+          assert minimum and minimum[1] == os.environ['DEPLOYMENT_TARGET'], build
+          assert not re.search(r'cryptid\s+[1-9]', load_commands), 'Encrypted app cannot be re-signed'
+          signed = subprocess.run(['codesign', '-d', str(executable)], capture_output=True)
+          assert signed.returncode != 0, 'Main executable is still signed'
+          assert not list(app.rglob('embedded.mobileprovision')), 'Unexpected provisioning profile'
+          assert not list(app.rglob('_CodeSignature')), 'Unexpected signature directory'
+          # The source reads these files directly from Bundle.main.resourceURL.
+          source = pathlib.Path('SpektraCam/Resources/ModelData')
+          manifest = json.loads((source / 'manifest.json').read_text())
+          for name, expected in manifest['files'].items():
+              path = app / name
+              assert path.is_file(), f'Missing resource at bundle root: {name}'
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, f'Damaged resource: {name}'
+          assert (app / 'PrivacyInfo.xcprivacy').is_file(), 'Missing privacy manifest'
+          assert (app / 'Assets.car').is_file(), 'Missing compiled assets'
+          metadata = {
+              'source_commit': os.environ['GITHUB_SHA'],
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'run_url': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True).strip(),
+              'sdk': subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'], text=True).strip(),
+              'minimum_ios': info['MinimumOSVersion'], 'architecture': archs,
+              'bundle_id': info['CFBundleIdentifier'],
+              'app_version': info['CFBundleShortVersionString'],
+              'app_build': info['CFBundleVersion'], 'unsigned': True,
+              'verified_model_files': len(manifest['files']),
+              'device_runtime_tested': False,
+          }
+          pathlib.Path('dist/build-info.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          print(json.dumps(metadata, indent=2))
+          PY
+          # IPA is a ZIP with Payload/*.app at its root; exportArchive would require signing.
+          (cd "$PACKAGE_DIR" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/dist/SpektraCam-unsigned.ipa" Payload)
+          unzip -t dist/SpektraCam-unsigned.ipa | tail -n 2
+          (cd dist && shasum -a 256 SpektraCam-unsigned.ipa > SHA256SUMS.txt)
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpektraCam-unsigned-IPA-${{ github.run_number }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpektraCam-build-logs-${{ github.run_number }}
+          path: ci-logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Record outcome
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo '### SpektraCam unsigned iPhone build'
+            echo "- Job status: $JOB_STATUS"
+            echo "- Source: $GITHUB_SHA"
+            echo '- Required toolchain: Xcode 27.2; actual version is in toolchain.log.'
+            echo '- Minimum iOS: 27.2; architecture: arm64.'
+            if [[ "$JOB_STATUS" == success ]]; then
+              echo '- Download the IPA artifact ZIP, extract it, then load SpektraCam-unsigned.ipa in Sideloadly.'
+              echo '- Archive and package checks passed. Installation and camera/GPU runtime behavior still require an iPhone.'
+            else
+              echo '- Build/package checks did not complete successfully. Inspect the failed step and build-logs artifact.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
